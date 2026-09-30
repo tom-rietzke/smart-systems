@@ -12,12 +12,14 @@ Eine detaillierte Gegenüberstellung mit dem Bewertungsbogen steht in
 
 ```text
 Arduino-Sensoren --Seriell--> Raspberry-Pi-Controller --SQL--> PostgreSQL
-																			|
-																			+-- MQTT --> Mosquitto --> MQTT-App / Node-RED
-																			|
-																			+-- Seriell --> Arduino-Aktor --> LCD, Lüfter, Servo
-																			|
-																			+-- HTTP --> Temperatur-Dashboard
+													   |
+													   +-- MQTT --> Mosquitto --> MQTT-App / Node-RED
+													   |
+													   +-- Seriell --> Arduino-Aktor --> LCD, Lüfter, Servo
+													   |
+													   +-- HTTP --> Temperatur-Dashboard
+													   |
+													   +-- Outbox --> AWS IoT Core --> Amazon Timestream
 ```
 
 ### Bestandteile
@@ -27,6 +29,7 @@ Arduino-Sensoren --Seriell--> Raspberry-Pi-Controller --SQL--> PostgreSQL
 - [`sketches/`](sketches/): Arduino-Programme für Sensoren und Aktor
 - [`compose.yml`](compose.yml): PostgreSQL, Mosquitto, Controller, Dashboard und
 	Node-RED
+- [`terraform/aws_iot/`](terraform/aws_iot/): AWS IoT Core, Timestream und IAM-Regelrolle
 - [`tests/`](tests/): automatisierte Unit- und Dashboard-Tests
 - [`docs/`](docs/): technische Pläne und Nachweise zum Bewertungsbogen
 
@@ -139,6 +142,11 @@ Messwerte werden in PostgreSQL in der Tabelle `temperatures` gespeichert:
 Pro Sensor wird höchstens ein Datenbankwert alle zehn Sekunden geschrieben. Das LCD
 und MQTT werden bei jedem eingehenden Messwert aktualisiert.
 
+Für die optionale Cloud-Sicherung legt der Controller den lokalen Temperaturdatensatz
+und einen Eintrag in `cloud_outbox` gemeinsam an. Der separate Cloud-Sync überträgt
+ausstehende Werte an AWS IoT Core und bestätigt einen Outbox-Eintrag erst nach der
+QoS-1-Brokerbestätigung.
+
 ## MQTT und Node-RED
 
 Der MQTT-Broker ist unter Port `1883` erreichbar. Der Controller veröffentlicht
@@ -156,6 +164,17 @@ beibehaltene Nachrichten und nimmt Aktor-Befehle entgegen.
 Node-RED läuft auf dem Raspberry Pi unter `127.0.0.1:1880`. Innerhalb des Compose-
 Netzwerks verwenden MQTT-Nodes den Broker `mosquitto` auf Port `1883`. Ein konkreter
 Node-RED-Flow ist in diesem Repository noch nicht versioniert.
+
+## AWS Cloud
+
+AWS IoT Core und Amazon Timestream sind optional. Terraform-Ressourcen, Zertifikats-
+Setup, Betrieb, Datenprüfung, Kostenhinweise und Cleanup sind in der
+[AWS-IoT-Einrichtungsanleitung](docs/aws-iot-setup.md) beschrieben. Auf dem
+Raspberry Pi startet der zusätzliche Worker nur mit dem Cloud-Profil:
+
+```bash
+podman compose --profile cloud up -d --build cloud_sync
+```
 
 Die automatische Kühlregel schaltet ab einer maximalen Temperatur über `26.0 °C`
 den Lüfter ein. Die Klappe öffnet erst ab `30.0 °C` und schließt darunter wieder.

@@ -1,5 +1,6 @@
 import importlib
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 import sys
 import types
@@ -22,6 +23,7 @@ controller = importlib.import_module("mobilefrost.controller")
 database = importlib.import_module("mobilefrost.database")
 display = importlib.import_module("mobilefrost.display")
 mqtt_io = importlib.import_module("mobilefrost.mqtt_io")
+cloud_sync = importlib.import_module("mobilefrost.cloud_sync")
 sensor_io = importlib.import_module("mobilefrost.sensor_io")
 
 
@@ -90,10 +92,64 @@ class TemperatureSensorTests(unittest.TestCase):
             )
         )
         self.assertEqual(
-            cursor.parameters, ("arduino_sensor_luis", 23.5)
+            cursor.executions[0], ("arduino_sensor_luis", 23.5)
         )
         self.assertEqual(connection.commits, 1)
         self.assertEqual(connection.rollbacks, 0)
+
+    def test_stores_temperature_and_enqueues_cloud_outbox_atomically(self):
+        cursor = RecordingCursor()
+        connection = RecordingConnection()
+
+        self.assertTrue(
+            database.store_temperature(
+                cursor, connection, "arduino_sensor_luis", 23.5
+            )
+        )
+
+        self.assertEqual(len(cursor.queries), 2)
+        self.assertIn("INSERT INTO temperatures", cursor.queries[0])
+        self.assertIn("INSERT INTO cloud_outbox", cursor.queries[1])
+        self.assertEqual(connection.commits, 1)
+        self.assertEqual(connection.rollbacks, 0)
+
+    def test_outbox_insert_failure_rolls_back_temperature_insert(self):
+        cursor = RecordingCursor(error_on_query="INSERT INTO cloud_outbox")
+        connection = RecordingConnection()
+
+        self.assertFalse(
+            database.store_temperature(
+                cursor, connection, "arduino_sensor_luis", 23.5
+            )
+        )
+
+        self.assertEqual(connection.commits, 0)
+        self.assertEqual(connection.rollbacks, 1)
+
+    def test_fetches_pending_cloud_readings_in_timestamp_order(self):
+        rows = [
+            (7, "arduino_sensor_luis", 23.5, datetime(2026, 9, 30, 9, 0)),
+            (8, "arduino_sensor_marten", 22.0, datetime(2026, 9, 30, 9, 1)),
+        ]
+        cursor = RecordingCursor(rows=rows)
+
+        result = database.fetch_pending_cloud_readings(cursor, limit=2)
+
+        self.assertEqual(result, rows)
+        self.assertIn("published_at IS NULL", cursor.queries[0])
+        self.assertIn("ORDER BY temperatures.timestamp ASC", cursor.queries[0])
+        self.assertEqual(cursor.parameters, (2,))
+
+    def test_marks_cloud_reading_published_and_commits(self):
+        cursor = RecordingCursor(rowcount=1)
+        connection = RecordingConnection()
+
+        result = database.mark_cloud_reading_published(cursor, connection, 7)
+
+        self.assertTrue(result)
+        self.assertIn("UPDATE cloud_outbox", cursor.queries[0])
+        self.assertEqual(cursor.parameters, (7,))
+        self.assertEqual(connection.commits, 1)
 
     def test_database_error_rolls_back_without_raising(self):
         cursor = RecordingCursor(error=RuntimeError("database unavailable"))
@@ -197,7 +253,9 @@ class TemperatureSensorTests(unittest.TestCase):
         self.assertEqual(service.run_once(), 1)
 
         self.assertEqual(actuator.writes[0], b"D:--.-;--.-;23.5\n")
-        self.assertEqual(cursor.parameters, ("arduino_sensor_luis", 23.5))
+        self.assertEqual(
+            cursor.executions[0], ("arduino_sensor_luis", 23.5)
+        )
         self.assertEqual(manager.retry_calls, 1)
 
     def test_controller_displays_every_reading_and_stores_every_ten_seconds(self):
@@ -232,7 +290,10 @@ class TemperatureSensorTests(unittest.TestCase):
                 b"D:--.-;--.-;23.5\n",
             ],
         )
-        self.assertEqual(len(cursor.executions), 2)
+        self.assertEqual(
+            sum("INSERT INTO temperatures" in query for query in cursor.queries),
+            2,
+        )
         self.assertEqual(sleeps, [])
 
     def test_controller_retries_database_write_after_failure(self):
@@ -350,16 +411,29 @@ class TemperatureSensorTests(unittest.TestCase):
 
 
 class RecordingCursor:
-    def __init__(self, error=None):
+    def __init__(self, error=None, rows=None, rowcount=1, error_on_query=None):
         self.error = error
+        self.error_on_query = error_on_query
         self.parameters = None
         self.executions = []
+        self.queries = []
+        self.rows = rows or []
+        self.rowcount = rowcount
 
-    def execute(self, _query, parameters):
+    def execute(self, query, parameters):
         if self.error:
             raise self.error
+        self.queries.append(query)
+        if self.error_on_query and self.error_on_query in query:
+            raise RuntimeError("outbox unavailable")
         self.parameters = parameters
         self.executions.append(parameters)
+
+    def fetchone(self):
+        return (42, datetime(2026, 9, 30, tzinfo=timezone.utc))
+
+    def fetchall(self):
+        return self.rows
 
 
 class RecordingConnection:
@@ -447,6 +521,50 @@ class RecordingMqttClient:
         self.loop_started = True
 
 
+class RecordingPublishInfo:
+    def __init__(self, published):
+        self.rc = 0
+        self.published = published
+
+    def wait_for_publish(self, timeout=None):
+        self.timeout = timeout
+
+    def is_published(self):
+        return self.published
+
+
+class RecordingCloudMqttClient:
+    def __init__(self, published=True):
+        self.published_result = published
+        self.tls_configuration = None
+        self.connection = None
+        self.published = []
+        self.loop_started = False
+
+    def tls_set(self, **configuration):
+        self.tls_configuration = configuration
+
+    def connect(self, endpoint, port, keepalive):
+        self.connection = (endpoint, port, keepalive)
+
+    def loop_start(self):
+        self.loop_started = True
+
+    def publish(self, topic, payload, qos):
+        self.published.append((topic, payload, qos))
+        return RecordingPublishInfo(self.published_result)
+
+
+class RecordingCloudPublisher:
+    def __init__(self, results):
+        self.results = list(results)
+        self.events = []
+
+    def publish(self, sensor_id, payload):
+        self.events.append((sensor_id, payload))
+        return self.results.pop(0)
+
+
 class FailingMqttClient:
     def publish(self, _topic, _payload, retain=False):
         raise RuntimeError("broker unavailable")
@@ -498,6 +616,143 @@ class MqttIoTests(unittest.TestCase):
         for topic, payload in invalid_commands:
             with self.subTest(topic=topic, payload=payload):
                 self.assertIsNone(mqtt_io.parse_actuator_command(topic, payload))
+
+
+class CloudSyncTests(unittest.TestCase):
+    def test_formats_cloud_payload_with_utc_epoch(self):
+        timestamp = datetime(2026, 9, 30, 9, 0)
+
+        payload = cloud_sync.format_cloud_payload(
+            7, "arduino_sensor_luis", 23.5, timestamp
+        )
+
+        self.assertEqual(
+            json.loads(payload),
+            {
+                "event_id": 7,
+                "sensor_id": "arduino_sensor_luis",
+                "value": 23.5,
+                "timestamp": "2026-09-30T09:00:00+00:00",
+                "epoch_ms": 1790758800000,
+            },
+        )
+
+    def test_cloud_publisher_configures_tls_and_waits_for_qos_one_ack(self):
+        client = RecordingCloudMqttClient()
+        publisher = cloud_sync.CloudMqttPublisher(
+            client,
+            "example-ats.iot.eu-central-1.amazonaws.com",
+            "mobilefrost-pi",
+            "/run/secrets/device-cert.pem",
+            "/run/secrets/device-private.pem",
+            "/run/secrets/AmazonRootCA1.pem",
+        )
+
+        publisher.connect()
+        acknowledged = publisher.publish(
+            "arduino_sensor_luis", '{"event_id":7}'
+        )
+
+        self.assertTrue(acknowledged)
+        self.assertEqual(
+            client.tls_configuration,
+            {
+                "ca_certs": "/run/secrets/AmazonRootCA1.pem",
+                "certfile": "/run/secrets/device-cert.pem",
+                "keyfile": "/run/secrets/device-private.pem",
+            },
+        )
+        self.assertEqual(
+            client.connection,
+            ("example-ats.iot.eu-central-1.amazonaws.com", 8883, 60),
+        )
+        self.assertEqual(
+            client.published,
+            [
+                (
+                    "mobilefrost/cloud/temperatures/arduino_sensor_luis",
+                    '{"event_id":7}',
+                    1,
+                )
+            ],
+        )
+
+    def test_cloud_publisher_returns_false_without_publish_ack(self):
+        client = RecordingCloudMqttClient(published=False)
+        publisher = cloud_sync.CloudMqttPublisher(
+            client,
+            "example-ats.iot.eu-central-1.amazonaws.com",
+            "mobilefrost-pi",
+            "device-cert.pem",
+            "device-private.pem",
+            "AmazonRootCA1.pem",
+        )
+
+        self.assertFalse(
+            publisher.publish("arduino_sensor_luis", '{"event_id":7}')
+        )
+
+    def test_sync_once_marks_only_acknowledged_rows(self):
+        rows = [
+            (7, "arduino_sensor_luis", 23.5, datetime(2026, 9, 30, 9, 0)),
+            (8, "arduino_sensor_marten", 22.0, datetime(2026, 9, 30, 9, 1)),
+        ]
+        cursor = RecordingCursor(rows=rows)
+        connection = RecordingConnection()
+        publisher = RecordingCloudPublisher([True, True])
+
+        count = cloud_sync.sync_once(cursor, connection, publisher, batch_size=2)
+
+        self.assertEqual(count, 2)
+        self.assertEqual(
+            [parameters for parameters in cursor.executions[1:]],
+            [(7,), (8,)],
+        )
+        self.assertEqual(len(publisher.events), 2)
+        self.assertEqual(connection.commits, 2)
+
+    def test_sync_once_leaves_failed_and_later_rows_pending(self):
+        rows = [
+            (7, "arduino_sensor_luis", 23.5, datetime(2026, 9, 30, 9, 0)),
+            (8, "arduino_sensor_marten", 22.0, datetime(2026, 9, 30, 9, 1)),
+            (9, "arduino_sensor_andor", 22.4, datetime(2026, 9, 30, 9, 2)),
+        ]
+        cursor = RecordingCursor(rows=rows)
+        connection = RecordingConnection()
+        publisher = RecordingCloudPublisher([True, False])
+
+        count = cloud_sync.sync_once(cursor, connection, publisher, batch_size=3)
+
+        self.assertEqual(count, 1)
+        self.assertEqual(cursor.executions[1:], [(7,)])
+        self.assertEqual(len(publisher.events), 2)
+        self.assertEqual(connection.commits, 1)
+
+    def test_cloud_configuration_is_disabled_when_incomplete(self):
+        self.assertIsNone(cloud_sync.cloud_configuration_from_env({}))
+
+    def test_cloud_configuration_accepts_database_and_tls_paths(self):
+        environment = {
+            "DB_HOST": "db",
+            "DB_PORT": "5432",
+            "DB_NAME": "mobilefrost_db",
+            "DB_USER": "mobilefrost_user",
+            "DB_PASSWORD": "local-db-password",
+            "AWS_IOT_ENDPOINT": "example-ats.iot.eu-central-1.amazonaws.com",
+            "AWS_IOT_THING_NAME": "mobilefrost-pi",
+            "AWS_IOT_CERTIFICATE_PATH": "/run/secrets/device-cert.pem",
+            "AWS_IOT_PRIVATE_KEY_PATH": "/run/secrets/device-private.pem",
+            "AWS_IOT_ROOT_CA_PATH": "/run/secrets/AmazonRootCA1.pem",
+        }
+
+        configuration = cloud_sync.cloud_configuration_from_env(environment)
+
+        self.assertEqual(configuration["endpoint"], environment["AWS_IOT_ENDPOINT"])
+        self.assertEqual(configuration["thing_name"], "mobilefrost-pi")
+        self.assertEqual(
+            configuration["private_key_path"],
+            "/run/secrets/device-private.pem",
+        )
 
     def test_adapter_publishes_temperature_to_sensor_topic(self):
         client = RecordingMqttClient()
@@ -592,6 +847,17 @@ class ArduinoIntegrationTests(unittest.TestCase):
         self.assertIn("nodered:", compose)
         self.assertIn("image: nodered/node-red:latest", compose)
         self.assertIn('"127.0.0.1:1880:1880"', compose)
+
+    def test_compose_adds_opt_in_cloud_sync_with_read_only_certificates(self):
+        compose = (PROJECT_ROOT / "compose.yml").read_text(encoding="utf-8")
+
+        self.assertIn("cloud_sync:", compose)
+        self.assertIn("profiles:\n      - cloud", compose)
+        self.assertIn("python", compose)
+        self.assertIn("-m", compose)
+        self.assertIn("mobilefrost.cloud_sync", compose)
+        self.assertIn("AWS_IOT_ENDPOINT", compose)
+        self.assertIn("./secrets:/run/secrets/aws-iot:ro", compose)
 
     def test_controller_receives_mqtt_environment(self):
         compose = (PROJECT_ROOT / "compose.yml").read_text(encoding="utf-8")

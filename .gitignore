@@ -4,3 +4,12 @@ __pycache__/
 .pytest_cache/
 .venv/
 venv/
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+.env
+secrets/
+*.pem
+*.key

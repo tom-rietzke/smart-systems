@@ -30,6 +30,10 @@ def init_db(connection):
         cursor.execute("""CREATE TABLE IF NOT EXISTS temperatures (
             id SERIAL PRIMARY KEY, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             sensor_id VARCHAR(50), value NUMERIC(5, 2))""")
+        cursor.execute("""CREATE TABLE IF NOT EXISTS cloud_outbox (
+            id SERIAL PRIMARY KEY,
+            temperature_id INTEGER NOT NULL UNIQUE REFERENCES temperatures(id),
+            published_at TIMESTAMP NULL)""")
         connection.commit()
     except Exception as error:
         connection.rollback()
@@ -39,14 +43,48 @@ def init_db(connection):
 def store_temperature(cursor, connection, sensor_id, temperature):
     try:
         cursor.execute(
-            "INSERT INTO temperatures (sensor_id, value) VALUES (%s, %s)",
+            "INSERT INTO temperatures (sensor_id, value) VALUES (%s, %s) RETURNING id",
             (sensor_id, temperature),
+        )
+        temperature_id = cursor.fetchone()[0]
+        cursor.execute(
+            "INSERT INTO cloud_outbox (temperature_id) VALUES (%s)",
+            (temperature_id,),
         )
         connection.commit()
         return True
     except Exception as error:
         connection.rollback()
         print(f"Datenbankfehler ({sensor_id}): {error}")
+        return False
+
+
+def fetch_pending_cloud_readings(cursor, limit=100):
+    cursor.execute(
+        """SELECT outbox.id, temperatures.sensor_id, temperatures.value,
+                  temperatures.timestamp
+           FROM cloud_outbox AS outbox
+           JOIN temperatures ON temperatures.id = outbox.temperature_id
+           WHERE outbox.published_at IS NULL
+           ORDER BY temperatures.timestamp ASC, outbox.id ASC
+           LIMIT %s""",
+        (limit,),
+    )
+    return cursor.fetchall()
+
+
+def mark_cloud_reading_published(cursor, connection, outbox_id):
+    try:
+        cursor.execute(
+            """UPDATE cloud_outbox SET published_at = CURRENT_TIMESTAMP
+               WHERE id = %s AND published_at IS NULL""",
+            (outbox_id,),
+        )
+        connection.commit()
+        return cursor.rowcount > 0
+    except Exception as error:
+        connection.rollback()
+        print(f"Cloud-Outbox-Fehler ({outbox_id}): {error}")
         return False
 
 
