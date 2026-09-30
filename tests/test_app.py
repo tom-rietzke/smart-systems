@@ -534,17 +534,27 @@ class RecordingPublishInfo:
 
 
 class RecordingCloudMqttClient:
-    def __init__(self, published=True):
+    def __init__(self, published=True, connect_failures=0):
         self.published_result = published
+        self.connect_failures = connect_failures
+        self.connection_attempts = 0
         self.tls_configuration = None
+        self.tls_set_calls = 0
         self.connection = None
         self.published = []
         self.loop_started = False
 
     def tls_set(self, **configuration):
+        if self.tls_configuration is not None:
+            raise ValueError("SSL/TLS has already been configured.")
+        self.tls_set_calls += 1
         self.tls_configuration = configuration
 
     def connect(self, endpoint, port, keepalive):
+        self.connection_attempts += 1
+        if self.connect_failures:
+            self.connect_failures -= 1
+            raise OSError("Network is unreachable")
         self.connection = (endpoint, port, keepalive)
 
     def loop_start(self):
@@ -676,6 +686,26 @@ class CloudSyncTests(unittest.TestCase):
                 )
             ],
         )
+
+    def test_cloud_publisher_reuses_tls_after_connect_failure(self):
+        client = RecordingCloudMqttClient(connect_failures=1)
+        publisher = cloud_sync.CloudMqttPublisher(
+            client,
+            "example-ats.iot.eu-north-1.amazonaws.com",
+            "mobilefrost",
+            "device-cert.pem",
+            "device-private.pem",
+            "AmazonRootCA1.pem",
+        )
+
+        with self.assertRaises(OSError):
+            publisher.connect()
+
+        publisher.connect()
+
+        self.assertEqual(client.tls_set_calls, 1)
+        self.assertEqual(client.connection_attempts, 2)
+        self.assertTrue(client.loop_started)
 
     def test_cloud_publisher_returns_false_without_publish_ack(self):
         client = RecordingCloudMqttClient(published=False)

@@ -32,13 +32,16 @@ class CloudMqttPublisher:
         self.private_key_path = private_key_path
         self.root_ca_path = root_ca_path
         self.ack_timeout = ack_timeout
+        self._tls_configured = False
 
     def connect(self):
-        self.client.tls_set(
-            ca_certs=self.root_ca_path,
-            certfile=self.certificate_path,
-            keyfile=self.private_key_path,
-        )
+        if not self._tls_configured:
+            self.client.tls_set(
+                ca_certs=self.root_ca_path,
+                certfile=self.certificate_path,
+                keyfile=self.private_key_path,
+            )
+            self._tls_configured = True
         self.client.connect(self.endpoint, 8883, keepalive=60)
         self.client.loop_start()
 
