@@ -1,6 +1,7 @@
 from datetime import timezone
 import json
 import os
+import ssl
 import time
 
 from .database import (
@@ -36,13 +37,17 @@ class CloudMqttPublisher:
 
     def connect(self):
         if not self._tls_configured:
-            self.client.tls_set(
-                ca_certs=self.root_ca_path,
+            tls_context = ssl.create_default_context(
+                cafile=self.root_ca_path
+            )
+            tls_context.load_cert_chain(
                 certfile=self.certificate_path,
                 keyfile=self.private_key_path,
             )
+            tls_context.set_alpn_protocols(["x-amzn-mqtt-ca"])
+            self.client.tls_set_context(tls_context)
             self._tls_configured = True
-        self.client.connect(self.endpoint, 8883, keepalive=60)
+        self.client.connect(self.endpoint, 443, keepalive=60)
         self.client.loop_start()
 
     def publish(self, sensor_id, payload):

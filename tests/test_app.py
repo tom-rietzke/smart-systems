@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 import types
 import unittest
+from unittest.mock import patch
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -541,6 +542,8 @@ class RecordingCloudMqttClient:
         self.tls_configuration = None
         self.tls_set_calls = 0
         self.connection = None
+        self.tls_context = None
+        self.tls_context_set_calls = 0
         self.published = []
         self.loop_started = False
 
@@ -549,6 +552,10 @@ class RecordingCloudMqttClient:
             raise ValueError("SSL/TLS has already been configured.")
         self.tls_set_calls += 1
         self.tls_configuration = configuration
+
+    def tls_set_context(self, context):
+        self.tls_context_set_calls += 1
+        self.tls_context = context
 
     def connect(self, endpoint, port, keepalive):
         self.connection_attempts += 1
@@ -573,6 +580,18 @@ class RecordingCloudPublisher:
     def publish(self, sensor_id, payload):
         self.events.append((sensor_id, payload))
         return self.results.pop(0)
+
+
+class RecordingSslContext:
+    def __init__(self):
+        self.certificate_chain = None
+        self.alpn_protocols = None
+
+    def load_cert_chain(self, certfile, keyfile):
+        self.certificate_chain = (certfile, keyfile)
+
+    def set_alpn_protocols(self, protocols):
+        self.alpn_protocols = protocols
 
 
 class FailingMqttClient:
@@ -649,6 +668,7 @@ class CloudSyncTests(unittest.TestCase):
 
     def test_cloud_publisher_configures_tls_and_waits_for_qos_one_ack(self):
         client = RecordingCloudMqttClient()
+        ssl_context = RecordingSslContext()
         publisher = cloud_sync.CloudMqttPublisher(
             client,
             "example-ats.iot.eu-central-1.amazonaws.com",
@@ -658,24 +678,31 @@ class CloudSyncTests(unittest.TestCase):
             "/run/secrets/AmazonRootCA1.pem",
         )
 
-        publisher.connect()
+        with patch(
+            "ssl.create_default_context", return_value=ssl_context
+        ) as create_context:
+            publisher.connect()
         acknowledged = publisher.publish(
             "arduino_sensor_luis", '{"event_id":7}'
         )
 
         self.assertTrue(acknowledged)
-        self.assertEqual(
-            client.tls_configuration,
-            {
-                "ca_certs": "/run/secrets/AmazonRootCA1.pem",
-                "certfile": "/run/secrets/device-cert.pem",
-                "keyfile": "/run/secrets/device-private.pem",
-            },
+        create_context.assert_called_once_with(
+            cafile="/run/secrets/AmazonRootCA1.pem"
         )
+        self.assertEqual(
+            ssl_context.certificate_chain,
+            (
+                "/run/secrets/device-cert.pem",
+                "/run/secrets/device-private.pem",
+            ),
+        )
+        self.assertEqual(ssl_context.alpn_protocols, ["x-amzn-mqtt-ca"])
         self.assertEqual(
             client.connection,
-            ("example-ats.iot.eu-central-1.amazonaws.com", 8883, 60),
+            ("example-ats.iot.eu-central-1.amazonaws.com", 443, 60),
         )
+        self.assertIs(client.tls_context, ssl_context)
         self.assertEqual(
             client.published,
             [
@@ -689,6 +716,7 @@ class CloudSyncTests(unittest.TestCase):
 
     def test_cloud_publisher_reuses_tls_after_connect_failure(self):
         client = RecordingCloudMqttClient(connect_failures=1)
+        ssl_context = RecordingSslContext()
         publisher = cloud_sync.CloudMqttPublisher(
             client,
             "example-ats.iot.eu-north-1.amazonaws.com",
@@ -698,12 +726,16 @@ class CloudSyncTests(unittest.TestCase):
             "AmazonRootCA1.pem",
         )
 
-        with self.assertRaises(OSError):
+        with patch(
+            "ssl.create_default_context", return_value=ssl_context
+        ) as create_context:
+            with self.assertRaises(OSError):
+                publisher.connect()
+
             publisher.connect()
 
-        publisher.connect()
-
-        self.assertEqual(client.tls_set_calls, 1)
+        create_context.assert_called_once_with(cafile="AmazonRootCA1.pem")
+        self.assertEqual(client.tls_context_set_calls, 1)
         self.assertEqual(client.connection_attempts, 2)
         self.assertTrue(client.loop_started)
 

@@ -12,7 +12,8 @@ Messwerterfassung nicht.
   Anlegen von IAM-Rollen.
 - AWS CLI v2, Terraform ab Version 1.5 und Podman Compose.
 - Der Raspberry Pi ist mit dem Internet verbunden und kann ausgehende TLS-
-  Verbindungen auf Port `8883` aufbauen.
+  Verbindungen auf Port `443` aufbauen. Der MQTT-Client verwendet für X.509-
+  Authentifizierung das AWS-IoT-ALPN-Protokoll `x-amzn-mqtt-ca`.
 
 AWS IoT Core und Timestream für LiveAnalytics speichern die Daten in der bei
 Terraform gewählten Region, standardmäßig `eu-central-1`. Vor dem Dauerbetrieb

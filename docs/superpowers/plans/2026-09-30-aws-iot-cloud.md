@@ -58,12 +58,12 @@
 - Add `format_cloud_payload(outbox_id, sensor_id, value, timestamp) -> str`.
 - Add `CloudMqttPublisher(client, endpoint, thing_name, certificate_path, private_key_path, root_ca_path)` with `connect()` and `publish(sensor_id, payload) -> bool` methods.
 - Add `build_cloud_publisher(...)` to construct the Paho client from environment configuration and wrap it in `CloudMqttPublisher`.
-- `connect()` uses AWS IoT Core port `8883`, TLS certificate authentication, and the Thing name as MQTT client ID. `publish()` sends to `mobilefrost/cloud/temperatures/<sensor_id>` with QoS `1` and returns true only after AWS IoT Core acknowledges the message; this does not guarantee the downstream Timestream rule succeeded.
+- `connect()` uses AWS IoT Core port `443`, TLS certificate authentication with ALPN `x-amzn-mqtt-ca`, and the Thing name as MQTT client ID. `publish()` sends to `mobilefrost/cloud/temperatures/<sensor_id>` with QoS `1` and returns true only after AWS IoT Core acknowledges the message; this does not guarantee the downstream Timestream rule succeeded.
 
 - [ ] **Step 1: Test the serialized event contract.** Assert compact JSON includes `event_id`, `sensor_id`, numeric `value`, an ISO-8601 UTC `timestamp`, and integer `epoch_ms`. A naive database timestamp must be treated as UTC, matching the existing dashboard convention.
 - [ ] **Step 2: Run the contract test and verify it fails.** Run `python -m unittest tests.test_app.CloudSyncTests.test_formats_cloud_payload_with_utc_epoch -v`. Expected: missing `mobilefrost.cloud_sync` module.
 - [ ] **Step 3: Implement payload serialization.** Normalize aware timestamps to UTC, attach UTC to naive timestamps, compute epoch milliseconds from that UTC instant, and serialize with compact separators.
-- [ ] **Step 4: Test TLS and QoS configuration with a recording client.** Extend `RecordingMqttClient` or add a dedicated fake implementing `tls_set`, `connect`, and an acknowledged publish result. Verify the builder applies CA/certificate/key paths, sets a stable Thing-based client ID, connects to the endpoint on port `8883`, and publishes with QoS `1`. Verify a timeout or unsuccessful publish acknowledgement returns `False`.
+- [ ] **Step 4: Test TLS and QoS configuration with a recording client.** Extend `RecordingMqttClient` or add a dedicated fake implementing `tls_set_context`, `connect`, and an acknowledged publish result. Verify the builder applies CA/certificate/key paths, configures ALPN `x-amzn-mqtt-ca`, sets a stable Thing-based client ID, connects to the endpoint on port `443`, and publishes with QoS `1`. Verify a timeout or unsuccessful publish acknowledgement returns `False`.
 - [ ] **Step 5: Implement the publisher and run its tests.** Use the existing Paho dependency. Keep client construction injectable so unit tests require no AWS account or network. Run `python -m unittest tests.test_app.CloudSyncTests -v`.
 
 ## Task 3: Retryable Batch Sync Worker
