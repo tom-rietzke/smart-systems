@@ -10,18 +10,18 @@ Eine detaillierte Gegenüberstellung mit dem Bewertungsbogen steht in
 
 ## Architektur
 
-```text
-Arduino-Sensoren --Seriell--> Raspberry-Pi-Controller --SQL--> PostgreSQL
-													   |
-													   +-- MQTT --> Mosquitto --> MQTT-App / Node-RED
-													   |
-													   +-- Seriell --> Arduino-Aktor --> LCD, Lüfter, Servo
-													   |
-													   +-- HTTP --> Temperatur-Dashboard
-													   |
-													   +-- Outbox --> AWS IoT Core --> Amazon Timestream
-```
-
+```mermaid
+flowchart LR
+    A[Arduino-Sensoren] -->|Seriell| B[Controller]
+    B -->|Messwerte| C[(PostgreSQL)]
+    B -->|MQTT retained| D[Mosquitto]
+    D --> E[Node-RED]
+    D --> F[Dashboard / MQTT-Clients]
+    B -->|Seriell| G[Arduino-Aktor]
+    G --> H[LCD / Lüfter / Servo]
+    B -->|Outbox| I[AWS IoT Core]
+    I --> J[Amazon Timestream]
+    F --> K[Web-Dashboard]
 ### Bestandteile
 
 - [`src/mobilefrost/`](src/mobilefrost/): Python-Controller, Datenbankzugriff,
