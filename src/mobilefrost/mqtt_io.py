@@ -48,12 +48,20 @@ def parse_actuator_command(topic, payload):
         return ("flap", value)
     return None
 
-
 class MqttAdapter:
     def __init__(self, client=None, host=None, port=None):
         self.client = client
         self.host = host
         self.port = port
+
+    def _publish(self, topic, payload, retain=False):
+        if self.client is None:
+            return
+
+        try:
+            self.client.publish(topic, payload, retain=retain)
+        except Exception as error:
+            print(f"MQTT Publish fehlgeschlagen: {error}")
 
     def start(self, on_command):
         if self.client is None or self.host is None or self.port is None:
@@ -79,31 +87,19 @@ class MqttAdapter:
             print(f"MQTT nicht erreichbar: {error}")
 
     def publish_temperature(self, sensor_id, value, timestamp):
-        if self.client is None:
-            return
-
         topic = f"{TEMPERATURE_TOPIC_PREFIX}/{sensor_id}"
-        try:
-            self.client.publish(
-                topic,
-                format_temperature_payload(sensor_id, value, timestamp),
-                retain=True,
-            )
-        except Exception as error:
-            print(f"MQTT Publish fehlgeschlagen: {error}")
+        self._publish(
+            topic,
+            format_temperature_payload(sensor_id, value, timestamp),
+            retain=True,
+        )
 
     def publish_cooling_state(self, enabled, source="automatic"):
-        if self.client is None:
-            return
-
-        try:
-            self.client.publish(
-                COOLING_STATUS_TOPIC,
-                format_cooling_payload(enabled, source),
-                retain=True,
-            )
-        except Exception as error:
-            print(f"MQTT Publish fehlgeschlagen: {error}")
+        self._publish(
+            COOLING_STATUS_TOPIC,
+            format_cooling_payload(enabled, source),
+            retain=True,
+        )
 
 
 def build_mqtt_adapter():

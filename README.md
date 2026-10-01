@@ -29,9 +29,8 @@ Arduino-Sensoren --Seriell--> Raspberry-Pi-Controller --SQL--> PostgreSQL
 - [`sketches/`](sketches/): Arduino-Programme für Sensoren und Aktor
 - [`compose.yml`](compose.yml): PostgreSQL, Mosquitto, Controller, Dashboard und
 	Node-RED
-- [`terraform/aws_iot/`](terraform/aws_iot/): AWS IoT Core, Timestream und IAM-Regelrolle
 - [`tests/`](tests/): automatisierte Unit- und Dashboard-Tests
-- [`docs/`](docs/): technische Pläne und Nachweise zum Bewertungsbogen
+- [`docs/`](docs/): technische Pläne, Konfigurationshinweise und Nachweise
 
 ## Hardware und Datenformate
 
@@ -167,8 +166,8 @@ Node-RED-Flow ist in diesem Repository noch nicht versioniert.
 
 ## AWS Cloud
 
-AWS IoT Core und Amazon Timestream sind optional. Terraform-Ressourcen, Zertifikats-
-Setup, Betrieb, Datenprüfung, Kostenhinweise und Cleanup sind in der
+AWS IoT Core und Amazon Timestream sind optional. Zertifikats-Setup, Betrieb,
+Datenerfassung, Kostenhinweise und Cleanup sind in der
 [AWS-IoT-Einrichtungsanleitung](docs/aws-iot-setup.md) beschrieben. Auf dem
 Raspberry Pi startet der zusätzliche Worker nur mit dem Cloud-Profil:
 
@@ -181,10 +180,3 @@ den Lüfter ein. Die Klappe öffnet erst ab `30.0 °C` und schließt darunter wi
 Damit entspricht die Lüfter-Schwelle dem roten LED-Zustand des DHT11-Sketches.
 Manuelle MQTT-Befehle können beim nächsten Temperaturwert durch diese Automatik
 überschrieben werden.
-
-## Windows-Tests
-
-Für lokale Tests ohne echte Linux-Gerätenamen kann eine serielle Windows-Brücke
-verwendet werden. Dazu müssen die COM-Ports in `windows_serial_bridge.py` angepasst
-werden. Die Brücke verwendet die Sensor-IDs `arduino_sensor_marten` und
-`arduino_sensor_andor`.

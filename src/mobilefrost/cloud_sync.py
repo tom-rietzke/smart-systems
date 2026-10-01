@@ -28,7 +28,7 @@ class CloudMqttPublisher:
     ):
         self.client = client
         self.endpoint = endpoint
-        self.thing_name = thing_name
+        self._thing_name = thing_name
         self.certificate_path = certificate_path
         self.private_key_path = private_key_path
         self.root_ca_path = root_ca_path
