@@ -61,6 +61,29 @@ services:
       - AWS_IOT_PRIVATE_KEY_PATH=/run/secrets/aws-iot/device-private.pem
       - AWS_IOT_ROOT_CA_PATH=/run/secrets/aws-iot/AmazonRootCA1.pem
 
+  aws_bridge:
+    build: .
+    restart: on-failure
+    profiles:
+      - cloud
+    depends_on:
+      - mosquitto
+    command:
+      - python
+      - -u
+      - -m
+      - mobilefrost.aws_bridge
+    volumes:
+      - "./secrets:/run/secrets/aws-iot:ro"
+    environment:
+      - AWS_IOT_ENDPOINT=${AWS_IOT_ENDPOINT:-}
+      - AWS_IOT_THING_NAME=${AWS_IOT_THING_NAME:-mobilefrost}
+      - AWS_IOT_CERTIFICATE_PATH=/run/secrets/aws-iot/device-cert.pem
+      - AWS_IOT_PRIVATE_KEY_PATH=/run/secrets/aws-iot/device-private.pem
+      - AWS_IOT_ROOT_CA_PATH=/run/secrets/aws-iot/AmazonRootCA1.pem
+      - MQTT_HOST=mosquitto
+      - MQTT_PORT=1883
+
   dashboard:
     build: .
     restart: unless-stopped

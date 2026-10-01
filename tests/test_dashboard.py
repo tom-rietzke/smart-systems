@@ -121,9 +121,42 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(response.get_json()["error"], "Datenbank nicht erreichbar")
         self.assertNotIn(b"secret database details", response.data)
 
+    def test_api_allows_drive_control_commands(self):
+        commands = []
+        client = self.create_client(
+            lambda _hours: empty_data(),
+            command_handler=lambda kind, value: commands.append((kind, value)),
+        )
+
+        start = client.post("/api/drive/start")
+        stop = client.post("/api/drive/stop")
+
+        self.assertEqual(start.status_code, 200)
+        self.assertEqual(stop.status_code, 200)
+        self.assertEqual(commands, [("drive", "start"), ("drive", "stop")])
+
+    def test_api_rejects_invalid_actuator_values(self):
+        commands = []
+        client = self.create_client(
+            lambda _hours: empty_data(),
+            command_handler=lambda kind, value: commands.append((kind, value)),
+        )
+
+        response = client.post(
+            "/api/actuators/fan",
+            json={"value": 999},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["error"], "Ungültiger Wert")
+        self.assertEqual(commands, [])
+
     @staticmethod
-    def create_client(data_loader):
-        application = create_app(data_loader=data_loader)
+    def create_client(data_loader, command_handler=None):
+        application = create_app(
+            data_loader=data_loader,
+            command_handler=command_handler,
+        )
         application.config.update(TESTING=True)
         return application.test_client()
 

@@ -10,13 +10,13 @@ Messwerterfassung nicht.
 - Ein AWS-Konto mit Berechtigungen für AWS IoT Core, Timestream, CloudWatch Logs
   und IAM-Rollen samt Policies. Manche AWS-Academy-/Lab-Konten sperren das
   Anlegen von IAM-Rollen.
-- AWS CLI v2, Terraform ab Version 1.5 und Podman Compose.
+- AWS CLI v2 (nur für die optionale Zertifikatserstellung) und Podman Compose.
 - Der Raspberry Pi ist mit dem Internet verbunden und kann ausgehende TLS-
   Verbindungen auf Port `443` aufbauen. Der MQTT-Client verwendet für X.509-
   Authentifizierung das AWS-IoT-ALPN-Protokoll `x-amzn-mqtt-ca`.
 
-AWS IoT Core und Timestream für LiveAnalytics speichern die Daten in der bei
-Terraform gewählten Region, standardmäßig `eu-central-1`. Vor dem Dauerbetrieb
+AWS IoT Core und Timestream für LiveAnalytics speichern die Daten in der in der
+AWS-Konsole ausgewählten Region, empfohlen `eu-central-1`. Vor dem Dauerbetrieb
 die aktuelle regionale Preisübersicht für MQTT-Nachrichten, Regelaktionen,
 Timestream-Schreibvorgänge, Aufbewahrung und Abfragen prüfen.
 
@@ -32,39 +32,16 @@ aws sts get-caller-identity
 ```
 
 Alternativ kann ein bereits eingerichtetes AWS-CLI-Profil verwendet werden.
-Keine Access Keys oder Passwörter in Projektdateien, Terraform-Variablen oder
-Chatnachrichten eintragen. Die folgenden Terraform-Befehle führen keine
-Ressourcenänderung aus, bis `apply` bestätigt wird.
+Keine Access Keys oder Passwörter in Projektdateien oder Chatnachrichten
+eintragen. Die Ressourcen werden manuell über die AWS-Konsole eingerichtet.
 
-## Infrastruktur mit Terraform
+## AWS-Ressourcen in der Konsole
 
-Im Repository-Stamm ausführen:
-
-```powershell
-terraform -chdir=terraform/aws_iot init
-```
-
-Eine lokale, durch Git ignorierte Datei
-`terraform/aws_iot/terraform.tfvars` anlegen:
-
-```hcl
-aws_region  = "eu-central-1"
-project_name = "mobilefrost"
-```
-
-Plan prüfen und die Infrastruktur zuerst ohne Gerätezertifikat erstellen:
-
-```powershell
-terraform -chdir=terraform/aws_iot plan
-terraform -chdir=terraform/aws_iot apply
-```
-
-Terraform zeigt die Änderungen an und fragt vor dem Anlegen nochmals nach. Es
-werden ein IoT Thing und eine auf den Cloud-Temperatur-Topic begrenzte IoT-Policy,
-eine Timestream-Datenbank/-Tabelle, eine IoT-Regel sowie eine IAM-Rolle mit
-Schreibrecht nur auf diese Tabelle angelegt. Die Rolle benötigt zusätzlich
-`timestream:DescribeEndpoints`. Fehlgeschlagene Regelaktionen werden in einer
-CloudWatch-Loggruppe mit 14 Tagen Aufbewahrung protokolliert.
+Für Amplify-Hosting, Cognito, API Gateway, Lambda, DynamoDB, Timestream und die
+IoT-Regeln folge der vollständigen
+[Amplify-Dashboard-Console-Anleitung](amplify-dashboard-setup.md). Dort sind
+Ressourcennamen, Reihenfolge, IAM-Rechte, Topics, Umgebungsvariablen und
+Aufräumen beschrieben. Terraform wird nicht benötigt.
 
 ## Gerätezertifikat erstellen
 
@@ -106,39 +83,18 @@ aws iot create-keys-and-certificate \
 chmod 600 "$secret_dir/device-private.pem"
 ```
 
-Kopiere nur die Zertifikats-ARN in `terraform/aws_iot/terraform.tfvars`:
-
-```hcl
-aws_region             = "eu-central-1"
-project_name            = "mobilefrost"
-device_certificate_arn = "arn:aws:iot:eu-central-1:ACCOUNT_ID:cert/CERTIFICATE_ID"
-```
-
-Dann die Bindung des Zertifikats an Thing und Policy anwenden:
-
-```powershell
-terraform -chdir=terraform/aws_iot plan
-terraform -chdir=terraform/aws_iot apply
-```
-
-Das private Schlüsselpaar wird nicht von Terraform erstellt und kommt nicht in
-den Terraform-State. Lade die Amazon Root CA separat in denselben lokalen
-Geheimnisordner:
+Das private Schlüsselpaar bleibt ausschließlich im lokalen Geheimnisordner. Lade
+die Amazon Root CA separat in denselben Ordner:
 
 ```powershell
 curl.exe -o (Join-Path $secretDir "AmazonRootCA1.pem") `
   https://www.amazontrust.com/repository/AmazonRootCA1.pem
 ```
 
-Terraform-Ausgaben anzeigen:
-
-```powershell
-terraform -chdir=terraform/aws_iot output
-```
-
-Notiere `iot_endpoint` und `thing_name`. Der AWS-Zugang/CLI-Profile wird nur für
-Infrastrukturverwaltung gebraucht; der laufende Pi authentifiziert sich mit dem
-IoT-Zertifikat.
+Erstelle bzw. öffne in der AWS-Konsole das Thing und die gerätegebundene
+Zertifikat-Policy gemäß der Amplify-Console-Anleitung. Notiere den Device-Data-
+Endpoint aus **AWS IoT Core → Settings**. Der Pi authentifiziert sich im Betrieb
+mit dem IoT-Zertifikat, nicht mit einem AWS-CLI-Profil.
 
 ## Schlüssel auf den Raspberry Pi übertragen
 
@@ -238,20 +194,14 @@ lokale PostgreSQL-Speicherung, Mosquitto und Dashboard bleiben davon unabhängig
 
 Die Region `eu-central-1` hält die Cloud-Daten in der EU. Sensornachrichten
 enthalten nur die Sensor-ID, Temperatur und Messzeit, keine Personen- oder
-Fahrerdaten. Die Terraform-Tabelle verwendet 24 Stunden Memory-Store- und 30 Tage
+Fahrerdaten. Die Timestream-Tabelle verwendet standardmäßig 24 Stunden Memory-Store- und 30 Tage
 Magnetic-Store-Aufbewahrung. CloudWatch-Regelfehlerlogs werden nach 14 Tagen
 gelöscht. Preise und Aufbewahrungsbedarf vor längerem Betrieb prüfen; AWS-Preise
 können sich ändern.
 
-Demo-Ressourcen nach Abschluss entfernen:
-
-```powershell
-terraform -chdir=terraform/aws_iot destroy
-```
-
-`destroy` löscht auch Timestream-Datenbank und Tabelle samt Demo-Daten und trennt
-das Zertifikat von Thing und Policy. Das separat erzeugte Zertifikat danach
-deaktivieren und löschen:
+Demo-Ressourcen nach Abschluss manuell über die AWS-Konsole entfernen. Das löscht
+auch Timestream-Datenbank und Tabelle samt Demo-Daten. Das separat erzeugte
+Zertifikat danach deaktivieren und löschen:
 
 ```powershell
 $certificateId = ($certificateArn -split "/")[-1]

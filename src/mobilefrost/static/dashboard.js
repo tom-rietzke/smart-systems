@@ -128,6 +128,54 @@ function setStatus(mode, title, detail) {
   refreshLabel.textContent = detail;
 }
 
+async function postControl(endpoint, payload) {
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Control request failed: ${response.status}`);
+  }
+
+  return response.json();
+}
+
+document.querySelectorAll("[data-drive]").forEach((button) => {
+  button.addEventListener("click", async () => {
+    try {
+      await postControl(`/api/drive/${button.dataset.drive}`, {});
+      setStatus("online", "Steuerung", `Fahrt ${button.dataset.drive}`);
+    } catch (_error) {
+      setStatus("error", "Steuerung fehlerhaft", "Befehl konnte nicht gesendet werden");
+    }
+  });
+});
+
+const fanSlider = document.querySelector("#fan-slider");
+const flapSlider = document.querySelector("#flap-slider");
+const fanValue = document.querySelector("#fan-value");
+const flapValue = document.querySelector("#flap-value");
+
+function bindSlider(slider, label, endpoint) {
+  slider.addEventListener("input", () => {
+    label.textContent = slider.value;
+  });
+
+  slider.addEventListener("change", async () => {
+    try {
+      await postControl(endpoint, { value: Number(slider.value) });
+      setStatus("online", "Steuerung", `${endpoint}=${slider.value}`);
+    } catch (_error) {
+      setStatus("error", "Steuerung fehlerhaft", "Befehl konnte nicht gesendet werden");
+    }
+  });
+}
+
+bindSlider(fanSlider, fanValue, "/api/actuators/fan");
+bindSlider(flapSlider, flapValue, "/api/actuators/flap");
+
 async function refreshData() {
   if (state.loading) return;
   state.loading = true;

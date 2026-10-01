@@ -72,6 +72,31 @@
           <div class="chart-state" id="chart-state" aria-live="polite">Messwerte werden geladen…</div>
         </div>
       </section>
+
+      <section class="control-panel" aria-label="Systemsteuerung">
+        <div class="control-card">
+          <p class="eyebrow">Fahrt</p>
+          <div class="drive-buttons">
+            <button type="button" class="drive-button start" data-drive="start">Start</button>
+            <button type="button" class="drive-button stop" data-drive="stop">Stop</button>
+          </div>
+        </div>
+
+        <div class="control-card">
+          <p class="eyebrow">Kühlung</p>
+          <label class="slider-row" for="fan-slider">
+            <span>Lüfter</span>
+            <strong id="fan-value">128</strong>
+          </label>
+          <input id="fan-slider" type="range" min="0" max="255" step="1" value="128">
+
+          <label class="slider-row" for="flap-slider">
+            <span>Klappe</span>
+            <strong id="flap-value">45</strong>
+          </label>
+          <input id="flap-slider" type="range" min="0" max="90" step="1" value="45">
+        </div>
+      </section>
     </main>
   </body>
 </html>

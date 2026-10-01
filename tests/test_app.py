@@ -877,6 +877,14 @@ class CloudSyncTests(unittest.TestCase):
 
 
 class ArduinoIntegrationTests(unittest.TestCase):
+    def test_amplify_buildspec_uses_frontend_monorepo_artifacts(self):
+        buildspec = (PROJECT_ROOT / "amplify.yml").read_text(encoding="utf-8")
+
+        self.assertIn("appRoot: frontend", buildspec)
+        self.assertIn("- npm ci", buildspec)
+        self.assertIn("- npm run build", buildspec)
+        self.assertIn("baseDirectory: dist", buildspec)
+
     def test_dockerfile_installs_and_runs_package(self):
         dockerfile = (PROJECT_ROOT / "Dockerfile").read_text(encoding="utf-8")
 
@@ -920,6 +928,17 @@ class ArduinoIntegrationTests(unittest.TestCase):
         self.assertIn("mobilefrost.cloud_sync", compose)
         self.assertIn("AWS_IOT_ENDPOINT", compose)
         self.assertIn("./secrets:/run/secrets/aws-iot:ro", compose)
+
+    def test_compose_adds_opt_in_aws_bridge_with_read_only_certificates(self):
+        compose = (PROJECT_ROOT / "compose.yml").read_text(encoding="utf-8")
+
+        bridge_service = compose.split("  aws_bridge:", 1)[1].split("  dashboard:", 1)[0]
+        self.assertIn("profiles:\n      - cloud", bridge_service)
+        self.assertIn("mobilefrost.aws_bridge", bridge_service)
+        self.assertIn("mosquitto", bridge_service)
+        self.assertIn("AWS_IOT_ENDPOINT", bridge_service)
+        self.assertIn("MQTT_HOST=mosquitto", bridge_service)
+        self.assertIn("./secrets:/run/secrets/aws-iot:ro", bridge_service)
 
     def test_controller_receives_mqtt_environment(self):
         compose = (PROJECT_ROOT / "compose.yml").read_text(encoding="utf-8")

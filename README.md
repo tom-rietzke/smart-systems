@@ -21,7 +21,12 @@ flowchart LR
     G --> H[LCD / Lüfter / Servo]
     B -->|Outbox| I[AWS IoT Core]
     I --> J[Amazon Timestream]
-    F --> K[Web-Dashboard]
+    I -->|Aktor-Befehle| L[Pi AWS-Bridge]
+    L --> D
+    U[Angemeldete Nutzer] --> M[Amplify Dashboard]
+    M --> N[Cognito JWT API]
+    N --> I
+    N --> J
 ```
 
 ### Bestandteile
@@ -169,12 +174,15 @@ Node-RED-Flow ist in diesem Repository noch nicht versioniert.
 ## AWS Cloud
 
 AWS IoT Core und Amazon Timestream sind optional. Zertifikats-Setup, Betrieb,
-Datenerfassung, Kostenhinweise und Cleanup sind in der
-[AWS-IoT-Einrichtungsanleitung](docs/aws-iot-setup.md) beschrieben. Auf dem
-Raspberry Pi startet der zusätzliche Worker nur mit dem Cloud-Profil:
+Datenerfassung, Kostenhinweise und Cleanup stehen in der
+[AWS-IoT-Einrichtungsanleitung](docs/aws-iot-setup.md). Das login-geschützte
+Cloud-Dashboard mit Cognito, API und Pi-Aktor-Rückkanal wird manuell nach der
+[Amplify-Console-Anleitung](docs/amplify-dashboard-setup.md) eingerichtet.
+Terraform ist nicht erforderlich. Auf dem Raspberry Pi starten Cloud-Sync und
+AWS-Bridge nur mit dem Cloud-Profil:
 
 ```bash
-podman compose --profile cloud up -d --build cloud_sync
+podman compose --profile cloud up -d --build cloud_sync aws_bridge
 ```
 
 Die automatische Kühlregel schaltet ab einer maximalen Temperatur über `26.0 °C`
