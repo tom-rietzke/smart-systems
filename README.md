@@ -22,6 +22,8 @@ flowchart LR
     B -->|Outbox| I[AWS IoT Core]
     I --> J[Amazon Timestream]
     F --> K[Web-Dashboard]
+```
+
 ### Bestandteile
 
 - [`src/mobilefrost/`](src/mobilefrost/): Python-Controller, Datenbankzugriff,
