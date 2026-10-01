@@ -1,0 +1,196 @@
+body {
+  background-color: var(--paper);
+}
+
+.dashboard-view[hidden],
+.auth-section[hidden],
+#account-tools[hidden],
+#new-password-row[hidden] {
+  display: none;
+}
+
+.auth-section {
+  width: min(100%, 410px);
+  margin: 56px auto;
+  padding: 0 4px;
+}
+
+.auth-section h2 {
+  margin: 0 0 24px;
+  font-size: 1.55rem;
+}
+
+.auth-section form {
+  display: grid;
+  gap: 9px;
+}
+
+.auth-section label {
+  margin-top: 8px;
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+
+.auth-section input {
+  min-height: 42px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--ink);
+  background: var(--surface);
+  font: 1rem "IBM Plex Sans", sans-serif;
+}
+
+.primary-button,
+.quiet-button,
+.drive-button {
+  min-height: 42px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  font: 600 0.9rem "IBM Plex Sans", sans-serif;
+  cursor: pointer;
+}
+
+.primary-button {
+  margin-top: 15px;
+  color: #fff;
+  background: var(--andor);
+}
+
+.quiet-button {
+  min-height: 34px;
+  padding: 5px 10px;
+  border-color: var(--line);
+  color: var(--ink);
+  background: var(--surface);
+}
+
+.account-tools {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.auth-message {
+  min-height: 1.4em;
+  margin-top: 12px;
+  color: var(--error);
+  font-size: 0.86rem;
+}
+
+.dashboard-view > .connection {
+  justify-content: flex-end;
+  margin: -14px 0 16px;
+}
+
+.control-panel {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.control-card {
+  min-width: 0;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+.drive-state {
+  min-height: 1.3em;
+  margin: 18px 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.drive-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.drive-button {
+  flex: 1 1 130px;
+  padding: 8px 12px;
+  color: #fff;
+}
+
+.drive-button.start {
+  background: var(--ok);
+}
+
+.drive-button.stop {
+  background: var(--error);
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.52;
+}
+
+.slider-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 18px 0 8px;
+  font-size: 0.88rem;
+  font-weight: 600;
+}
+
+.slider-row strong {
+  min-width: 3ch;
+  font-family: "IBM Plex Mono", monospace;
+  text-align: right;
+}
+
+input[type="range"] {
+  width: 100%;
+  accent-color: var(--andor);
+}
+
+.control-status {
+  min-height: 1.4em;
+  margin: 14px 0 4px;
+  color: var(--muted);
+  font-size: 0.83rem;
+}
+
+.control-status[data-status="failed"],
+.control-status[data-status="timed_out"] {
+  color: var(--error);
+}
+
+.control-status[data-status="acknowledged"] {
+  color: var(--ok);
+}
+
+.control-note {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+@media (max-width: 720px) {
+  .account-tools {
+    align-self: flex-start;
+  }
+
+  .topbar {
+    align-items: flex-start;
+  }
+
+  .control-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-view > .connection {
+    justify-content: flex-start;
+    margin-top: 0;
+  }
+}

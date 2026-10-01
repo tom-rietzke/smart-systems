@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#f3f1eb">
+    <title>MobileFrost</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+  </head>
+  <body>
+    <main class="dashboard">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Kühlsystem · Cloud</p>
+          <h1>MobileFrost</h1>
+        </div>
+        <div class="account-tools" id="account-tools" hidden>
+          <span id="account-label"></span>
+          <button class="quiet-button" id="sign-out" type="button">Abmelden</button>
+        </div>
+      </header>
+
+      <section class="auth-section" id="auth-section" aria-labelledby="auth-title">
+        <p class="eyebrow">Sicherer Zugriff</p>
+        <h2 id="auth-title">Anmelden</h2>
+        <form id="login-form">
+          <label for="email">E-Mail</label>
+          <input id="email" name="email" type="email" autocomplete="username" required>
+          <label for="password">Passwort</label>
+          <input id="password" name="password" type="password" autocomplete="current-password" required>
+          <div id="new-password-row" hidden>
+            <label for="new-password">Neues Passwort</label>
+            <input id="new-password" name="new-password" type="password" autocomplete="new-password" minlength="12">
+          </div>
+          <button class="primary-button" id="login-submit" type="submit">Anmelden</button>
+        </form>
+        <p class="auth-message" id="auth-message" aria-live="polite"></p>
+      </section>
+
+      <section class="dashboard-view" id="dashboard-view" hidden>
+        <div class="connection" aria-live="polite">
+          <span class="status-dot" id="status-dot"></span>
+          <div>
+            <strong id="connection-label">Verbinde…</strong>
+            <span id="refresh-label">Noch keine Daten</span>
+          </div>
+        </div>
+
+        <section class="current-grid" aria-label="Aktuelle Temperaturen">
+          <article class="reading reading-marten">
+            <div class="reading-head"><span class="sensor-mark"></span><h2>Marten</h2></div>
+            <p class="temperature" id="value-marten">--.-<span>°C</span></p>
+            <time id="time-marten">Keine Messung</time>
+          </article>
+          <article class="reading reading-andor">
+            <div class="reading-head"><span class="sensor-mark"></span><h2>Andor</h2></div>
+            <p class="temperature" id="value-andor">--.-<span>°C</span></p>
+            <time id="time-andor">Keine Messung</time>
+          </article>
+          <article class="reading reading-luis">
+            <div class="reading-head"><span class="sensor-mark"></span><h2>Luis</h2></div>
+            <p class="temperature" id="value-luis">--.-<span>°C</span></p>
+            <time id="time-luis">Keine Messung</time>
+          </article>
+        </section>
+
+        <section class="chart-section" aria-labelledby="chart-title">
+          <div class="chart-toolbar">
+            <div><p class="eyebrow">Messhistorie</p><h2 id="chart-title">Temperaturverlauf</h2></div>
+            <div class="range-control" aria-label="Zeitraum auswählen">
+              <button type="button" data-hours="1" aria-pressed="false">1 Std.</button>
+              <button type="button" data-hours="24" class="active" aria-pressed="true">24 Std.</button>
+              <button type="button" data-hours="168" aria-pressed="false">7 Tage</button>
+            </div>
+          </div>
+          <div class="chart-frame">
+            <canvas id="temperature-chart" aria-label="Temperaturverlauf aller Sensoren"></canvas>
+            <div class="chart-state" id="chart-state" aria-live="polite">Messwerte werden geladen…</div>
+          </div>
+        </section>
+
+        <section class="control-panel" aria-label="Systemsteuerung">
+          <div class="control-card">
+            <p class="eyebrow">Fahrt</p>
+            <p class="drive-state" id="drive-state" aria-live="polite">Keine aktive Fahrt</p>
+            <div class="drive-buttons">
+              <button class="drive-button start" id="drive-start" type="button">Fahrt starten</button>
+              <button class="drive-button stop" id="drive-stop" type="button" disabled>Fahrt beenden</button>
+            </div>
+            <p class="control-status" id="drive-message" aria-live="polite"></p>
+          </div>
+
+          <div class="control-card">
+            <p class="eyebrow">Kühlung</p>
+            <label class="slider-row" for="fan-slider"><span>Lüfter-Sollwert</span><strong id="fan-value">0</strong></label>
+            <input id="fan-slider" type="range" min="0" max="255" step="1" value="0">
+            <label class="slider-row" for="flap-slider"><span>Klappen-Sollwert</span><strong id="flap-value">0°</strong></label>
+            <input id="flap-slider" type="range" min="0" max="90" step="1" value="0">
+            <p class="control-status" id="actuator-message" aria-live="polite">Bereit</p>
+            <p class="control-note">Die automatische Temperaturregelung kann manuelle Sollwerte beim nächsten Messwert überschreiben.</p>
+          </div>
+        </section>
+      </section>
+    </main>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
