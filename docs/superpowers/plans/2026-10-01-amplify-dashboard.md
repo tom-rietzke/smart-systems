@@ -4,9 +4,9 @@
 
 **Goal:** Host a login-protected MobileFrost dashboard on Amplify that reads cloud temperatures, records drive sessions, and sends acknowledged actuator commands to the Raspberry Pi without exposing the Pi to inbound internet traffic.
 
-**Architecture:** Amplify serves a static JavaScript frontend authenticated with Cognito. API Gateway validates Cognito JWTs and invokes Python Lambda handlers for Timestream reads, DynamoDB drive/command state, and IoT Core command publication. An opt-in Pi cloud-bridge service subscribes to device-scoped AWS IoT topics, forwards commands to local Mosquitto, and publishes acknowledgements; the local controller and dashboard continue to operate independently.
+**Architecture:** Amplify serves a static JavaScript frontend authenticated with Cognito. API Gateway validates Cognito JWTs and invokes Python Lambda handlers for DynamoDB temperature queries, drive/command state, and IoT Core command publication. Terraform manages the AWS resources. An opt-in Pi cloud-bridge service subscribes to device-scoped AWS IoT topics, forwards commands to local Mosquitto, and publishes acknowledgements; the local controller and dashboard continue to operate independently.
 
-**Tech Stack:** AWS Amplify Hosting, Amazon Cognito, API Gateway HTTP API, AWS Lambda Python, AWS IoT Core MQTT/TLS, Amazon Timestream, DynamoDB, Vite, AWS Amplify JavaScript Auth, Chart.js, Python `unittest`.
+**Tech Stack:** AWS Amplify Hosting, Amazon Cognito, API Gateway HTTP API, AWS Lambda Python, AWS IoT Core MQTT/TLS, DynamoDB, Terraform, Vite, AWS Amplify JavaScript Auth, Chart.js, Python `unittest`.
 
 ## Global Constraints
 
@@ -17,7 +17,7 @@
 - An actuator acknowledgement confirms Pi-bridge forwarding to local Mosquitto, not measured physical fan/servo position.
 - Manual actuator settings may be overwritten by automatic temperature control on a later sensor update.
 - Device private keys, cloud credentials, and repository access tokens are never committed or exposed to the frontend.
-- Configure AWS resources manually in the AWS Console; do not use or require Terraform. Existing user-edited Terraform drafts are outside this workflow.
+- Provision AWS resources with Terraform; never run `terraform apply` without reviewing the plan and explicit user confirmation.
 - Do not create Git commits unless requested.
 
 ---
@@ -31,7 +31,7 @@
 **Interfaces:**
 - `lambda_handler(event, context)` is the Lambda entry point.
 - `handle_request(event, dependencies)` routes API Gateway v2 events and returns an API Gateway response with JSON body and status code.
-- Dependencies expose DynamoDB, Timestream Query, and IoT Data Plane operations; tests inject fakes without AWS credentials.
+- Dependencies expose DynamoDB query/session/command operations and IoT Data Plane operations; tests inject fakes without AWS credentials.
 
 - [ ] **Step 1: Add failing API tests** for allowed temperature ranges (`1`, `24`, `168`), malformed ranges, missing JWT claims, latest/history response shape, and 503 masking when a cloud dependency fails.
 - [ ] **Step 2: Run `python -m unittest tests.test_cloud_api -v`** and verify the module/import or expected-route tests fail before implementation.
@@ -122,19 +122,20 @@
 - [ ] **Step 6: Run `npm --prefix frontend test -- --run` and `npm --prefix frontend run build`**; verify tests pass and the static output is generated in `frontend/dist`.
 - [ ] **Step 7: Add repository-root `amplify.yml`** using monorepo `appRoot: frontend`, `npm ci`, `npm run build`, and artifact directory `dist`; ignore `frontend/node_modules/` and `frontend/dist/` in Git.
 
-### Task 6: Document Manual AWS Console Setup
+### Task 6: Provision AWS with Terraform
 
 **Files:**
-- Create: `docs/amplify-dashboard-setup.md`
+- Modify: `terraform/amplify/main.tf`
+- Modify: `terraform/amplify/api.tf`
+- Modify: `terraform/amplify/data.tf`
+- Modify: `terraform/amplify/variables.tf`
+- Modify: `terraform/amplify/outputs.tf`
 
-- [ ] **Step 1: Document Amplify Hosting setup** using the Git-provider connection, `main` branch, monorepo root `frontend`, root `amplify.yml`, Vite output `dist`, and the four public `VITE_*` settings.
-- [ ] **Step 2: Document Cognito setup** with email sign-in, administrator-created users only, a public web client without a secret, and the User Pool/Client IDs to copy into Amplify variables.
-- [ ] **Step 3: Document data resources** by creating the DynamoDB operations table with string keys `pk`/`sk`, the Timestream database/table/retention, and the exact IoT-to-Timestream SQL/dimension/timestamp mapping.
-- [ ] **Step 4: Document Lambda packaging and roles** for `mobilefrost.cloud_api.lambda_handler` and `mobilefrost.cloud_ack.lambda_handler`, environment variables, CloudWatch logs, Timestream reads, DynamoDB access, and scoped IoT permissions.
-- [ ] **Step 5: Document API Gateway routes** with HTTP API, Lambda proxy integration, Cognito JWT issuer/audience, all authenticated routes, and CORS set to the actual Amplify branch origin.
-- [ ] **Step 6: Document IoT Core setup** for the Thing/certificate, exact connect/publish/subscribe/receive policy topics, temperature rule, and acknowledgement-to-Lambda rule.
-- [ ] **Step 7: Document the order-dependent setup and smoke tests** including Amplify build, invited user, unauthenticated API denial, cloud readings, drive session, command acknowledgement, and cleanup.
-- [ ] **Step 8: Verify the guide has no Terraform/state/token workflow** and that no AWS resource is created from the local environment.
+- [ ] **Step 1: Create the DynamoDB readings table** with partition key `sensor_id`, sort key `timestamp`, on-demand billing, and encryption.
+- [ ] **Step 2: Change the API Lambda policy and configuration** from Timestream to `dynamodb:Query` on the readings table and set `READINGS_TABLE`.
+- [ ] **Step 3: Change the temperature IoT rule** to the DynamoDBv2 action with `SELECT *`; grant its role only `dynamodb:PutItem` on the readings table.
+- [ ] **Step 4: Remove obsolete Timestream resources, variables, IAM actions, outputs, and documentation.** Preserve the existing separate operations table.
+- [ ] **Step 5: Run `terraform -chdir=terraform/amplify fmt -check`, `validate`, and `plan`; do not run apply automatically.**
 
 ### Task 7: Document Setup, Operations, and Safety
 
@@ -144,9 +145,9 @@
 - Create: `docs/amplify-dashboard-setup.md`
 
 - [ ] **Step 1: Document prerequisites and secret handling** for AWS Console access, Git-provider authorization, certificate storage on the Pi, and Cognito invited-user creation.
-- [ ] **Step 2: Document the manual AWS Console workflow** and explicitly state no AWS resources have been created by repository tests.
+- [ ] **Step 2: Document Terraform inputs, private state handling, plan review, explicit apply, and cleanup.**
 - [ ] **Step 3: Document Compose startup and verification** for the local stack and opt-in cloud bridge, including MQTT topics, API health/auth checks, command acknowledgement limits, and local operation during cloud outage.
-- [ ] **Step 4: Document teardown** for Amplify, Cognito, API/Lambda, IoT, Timestream, DynamoDB, and CloudWatch resources; warn that destroying Timestream removes cloud history.
+- [ ] **Step 4: Document teardown** for Amplify, Cognito, API/Lambda, IoT, DynamoDB, CloudWatch, and IAM resources; warn that destroying the readings table removes cloud history.
 - [ ] **Step 5: Run `python -m unittest discover -s tests -v`, `npm --prefix frontend test -- --run`, and `npm --prefix frontend run build`.**
 
 ### Task 8: End-to-End Contract Verification
@@ -160,4 +161,4 @@
 - [ ] **Step 1: Add integration contract tests** verifying the AWS bridge's published local topics match `mqtt_io.py`, the setup guide's IoT policies match the bridge command/ack topics, and cloud API response shapes match frontend calls.
 - [ ] **Step 2: Run all Python tests** with `python -m unittest discover -s tests -v` and preserve existing local dashboard/controller behavior.
 - [ ] **Step 3: Run frontend tests and build** with `npm --prefix frontend test -- --run` and `npm --prefix frontend run build`.
-- [ ] **Step 4: Report remaining deployment prerequisites** (AWS account/region, Git-provider connection, Pi certificate files, and Cognito invited user). Do not claim a live cloud deployment until an operator completes and verifies the Console setup.
+- [ ] **Step 4: Report remaining deployment prerequisites** (AWS account/region, Git-provider token, Pi certificate ARN, and explicit plan review). Do not claim a live deployment until apply and smoke tests succeed.

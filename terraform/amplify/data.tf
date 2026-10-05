@@ -4,8 +4,8 @@ resource "aws_cloudwatch_log_group" "iot_rule_errors" {
   tags              = local.common_tags
 }
 
-resource "aws_iam_role" "iot_timestream" {
-  name = "${local.prefix}-iot-timestream"
+resource "aws_iam_role" "iot_readings" {
+  name = "${local.prefix}-iot-readings"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -17,23 +17,16 @@ resource "aws_iam_role" "iot_timestream" {
   tags = local.common_tags
 }
 
-resource "aws_iam_role_policy" "iot_timestream_write" {
-  name = "${local.prefix}-timestream-write"
-  role = aws_iam_role.iot_timestream.id
+resource "aws_iam_role_policy" "iot_readings_write" {
+  name = "${local.prefix}-readings-write"
+  role = aws_iam_role.iot_readings.id
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
-      {
-        Effect   = "Allow"
-        Action   = ["timestream:WriteRecords"]
-        Resource = aws_timestreamwrite_table.temperatures.arn
-      },
-      {
-        Effect   = "Allow"
-        Action   = ["timestream:DescribeEndpoints"]
-        Resource = "*"
-      },
-    ]
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["dynamodb:PutItem"]
+      Resource = aws_dynamodb_table.readings.arn
+    }]
   })
 }
 
@@ -65,24 +58,16 @@ resource "aws_iam_role_policy" "iot_logs_write" {
 
 resource "aws_iot_topic_rule" "temperatures" {
   name        = replace("${local.prefix}_temperatures", "-", "_")
-  description = "Write MobileFrost cloud temperature readings to Timestream."
+  description = "Store MobileFrost cloud temperature readings in DynamoDB."
   enabled     = true
-  sql         = "SELECT sensor_id, value AS temperature_c FROM 'mobilefrost/cloud/temperatures/+'"
+  sql         = "SELECT * FROM 'mobilefrost/cloud/temperatures/+'"
   sql_version = "2016-03-23"
 
-  timestream {
-    database_name = aws_timestreamwrite_database.temperatures.database_name
-    table_name    = aws_timestreamwrite_table.temperatures.table_name
-    role_arn      = aws_iam_role.iot_timestream.arn
+  dynamodbv2 {
+    role_arn = aws_iam_role.iot_readings.arn
 
-    dimension {
-      name  = "sensor_id"
-      value = sensor_id
-    }
-
-    timestamp {
-      unit  = "MILLISECONDS"
-      value = epoch_ms
+    put_item {
+      table_name = aws_dynamodb_table.readings.name
     }
   }
 

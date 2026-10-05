@@ -9,7 +9,7 @@ import unittest
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
-from mobilefrost.cloud_api import handle_request
+from mobilefrost.cloud_api import handle_request, query_dynamodb_temperatures
 
 
 class CloudApiTests(unittest.TestCase):
@@ -84,6 +84,41 @@ class CloudApiTests(unittest.TestCase):
         self.assertEqual(response["statusCode"], 503)
         self.assertEqual(json.loads(response["body"])["error"], "Cloud-Daten nicht erreichbar")
         self.assertNotIn("private AWS failure details", response["body"])
+
+    def test_dynamodb_temperature_query_reads_range_and_latest_per_sensor(self):
+        now = datetime(2026, 10, 1, 12, 0, tzinfo=timezone.utc)
+        readings = FakeTemperatureTable(
+            {
+                "arduino_sensor_marten": [
+                    {"sensor_id": "arduino_sensor_marten", "timestamp": "2026-10-01T10:00:00+00:00", "value": Decimal("21.5")},
+                    {"sensor_id": "arduino_sensor_marten", "timestamp": "2026-10-01T11:30:00+00:00", "value": Decimal("22.5")},
+                ],
+                "arduino_sensor_andor": [
+                    {"sensor_id": "arduino_sensor_andor", "timestamp": "2026-10-01T10:15:00+00:00", "value": Decimal("23.5")},
+                ],
+                "arduino_sensor_luis": [],
+            }
+        )
+
+        result = query_dynamodb_temperatures(
+            readings,
+            1,
+            now=now,
+            key_factory=FakeDynamoKey,
+        )
+
+        self.assertEqual(
+            result["series"]["arduino_sensor_marten"],
+            [(datetime(2026, 10, 1, 11, 30, tzinfo=timezone.utc), 22.5)],
+        )
+        self.assertEqual(result["series"]["arduino_sensor_andor"], [])
+        self.assertEqual(
+            result["latest"]["arduino_sensor_andor"],
+            (datetime(2026, 10, 1, 10, 15, tzinfo=timezone.utc), 23.5),
+        )
+        self.assertNotIn("arduino_sensor_luis", result["latest"])
+        self.assertTrue(all(query["ScanIndexForward"] for query in readings.history_queries))
+        self.assertTrue(all(not query["ScanIndexForward"] for query in readings.latest_queries))
 
     def test_drive_start_is_idempotent_while_a_session_is_active(self):
         store = FakeDriveStore()
@@ -276,6 +311,55 @@ class FakeDriveStore:
             "status": "stopped",
             "ended_at": "2026-10-01T09:45:00+00:00",
         }
+
+
+class FakeDynamoCondition:
+    def __init__(self, predicates):
+        self.predicates = predicates
+
+    def __and__(self, other):
+        return FakeDynamoCondition(self.predicates + other.predicates)
+
+
+class FakeDynamoKey:
+    def __init__(self, name):
+        self.name = name
+
+    def eq(self, value):
+        return FakeDynamoCondition([(self.name, "eq", value)])
+
+    def gte(self, value):
+        return FakeDynamoCondition([(self.name, "gte", value)])
+
+
+class FakeTemperatureTable:
+    def __init__(self, readings):
+        self.readings = readings
+        self.history_queries = []
+        self.latest_queries = []
+
+    def query(self, **parameters):
+        condition = parameters["KeyConditionExpression"]
+        predicates = condition.predicates
+        sensor_id = next(value for name, operation, value in predicates if name == "sensor_id")
+        start_time = next(
+            (value for name, operation, value in predicates if name == "timestamp" and operation == "gte"),
+            None,
+        )
+        if start_time is None:
+            self.latest_queries.append(parameters)
+        else:
+            self.history_queries.append(parameters)
+
+        items = [
+            item
+            for item in self.readings[sensor_id]
+            if start_time is None or item["timestamp"] >= start_time
+        ]
+        items.sort(key=lambda item: item["timestamp"], reverse=not parameters["ScanIndexForward"])
+        if parameters.get("Limit") is not None:
+            items = items[:parameters["Limit"]]
+        return {"Items": items}
 
 
 def drive_dependencies(store, conflict_on_create=False):

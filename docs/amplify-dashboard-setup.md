@@ -1,14 +1,14 @@
-# Amplify-Dashboard manuell einrichten
+# Amplify-Dashboard mit Terraform einrichten
 
-Diese Anleitung richtet das Cloud-Dashboard vollständig über die AWS-Konsole ein.
-Terraform ist dafür nicht erforderlich. Die AWS-Ressourcen werden nicht aus dem
-Repository automatisch erstellt; sie müssen im gewählten AWS-Konto angelegt und
-später dort wieder gelöscht werden.
+Diese Anleitung richtet das Cloud-Dashboard mit Terraform ein. Temperaturwerte
+werden in DynamoDB gespeichert; Timestream wird nicht verwendet. Terraform
+erstellt die AWS-Ressourcen, aber führt keine Änderungen aus, bis du selbst
+`terraform apply` bestätigst.
 
 ## Voraussetzungen
 
 - Zugriff auf ein AWS-Konto mit Rechten für Amplify, Cognito, API Gateway,
-  Lambda, IAM, DynamoDB, Timestream und AWS IoT Core. AWS Academy-/Lab-Konten
+  Lambda, IAM, DynamoDB und AWS IoT Core. AWS Academy-/Lab-Konten
   können einzelne Dienste oder IAM-Rollen sperren.
 - Ein Git-Repository, das Amplify über den Git-Anbieter verbinden kann.
 - Region `eu-central-1` oder eine andere Region, in der alle benötigten Dienste
@@ -16,47 +16,129 @@ später dort wieder gelöscht werden.
 - Der Raspberry Pi ist bereits nach der
   [AWS-IoT-Anleitung](aws-iot-setup.md) mit AWS IoT verbunden. Für die neue
   Bridge werden dasselbe Gerätezertifikat und dieselben drei PEM-Dateien genutzt.
-- Vor dem Anlegen die aktuellen AWS-Preise für Amplify, Timestream, DynamoDB,
+- Vor dem Anlegen die aktuellen AWS-Preise für Amplify, DynamoDB,
   API Gateway, IoT Core, Lambda und CloudWatch prüfen.
 
-## 1. Amplify Hosting verbinden
+## 1. Terraform vorbereiten und prüfen
 
-1. AWS-Konsole öffnen und in der Zielregion **AWS Amplify → Create new app**
-   wählen.
-2. Git-Anbieter verbinden, dieses Repository und den Branch `main` auswählen.
-   Die Verbindung über den AWS-Git-Provider-Dialog autorisieren; kein Token in
-   Projektdateien oder Chatnachrichten speichern.
-3. **My app is a monorepo** aktivieren und als App-Root `frontend` eintragen.
-   Amplify setzt `AMPLIFY_MONOREPO_APP_ROOT=frontend`.
-4. Als Buildspec die Datei `amplify.yml` im Repository-Stamm verwenden. Sie
-   installiert über `npm ci`, baut mit `npm run build` und veröffentlicht
-   `frontend/dist`.
-5. Die App zunächst erstellen. Die Oberfläche zeigt bis zur vollständigen
-   Backend-Konfiguration an, dass Cloud-Login noch nicht konfiguriert ist.
-6. Die erste Amplify-URL notieren. Sie hat die Form
-   `https://main.<app-id>.amplifyapp.com` und wird später für CORS benötigt.
+Aktiviere zuerst das passende AWS-CLI-Profil bzw. die AWS-Credentials. Lege im
+Projektordner `terraform/amplify/terraform.tfvars` an. Sie wird durch
+`.gitignore` von Git ausgeschlossen, aber wie gewünscht mit OneDrive
+synchronisiert. Der GitHub-Token steht darin im Klartext und ist für Personen
+mit Zugriff auf dieses OneDrive freigegeben.
 
-## 2. Cognito für eingeladene Nutzer
+Beschaffe die Werte so:
 
-1. In derselben Region **Amazon Cognito → User pools → Create user pool** öffnen.
-2. E-Mail als Anmeldenamen wählen und E-Mail-Verifizierung aktivieren.
-3. Selbstregistrierung deaktivieren: Nutzer dürfen nur durch Administratoren
-   angelegt werden.
-4. Einen Web-App-Client für JavaScript anlegen. **Client secret nicht erzeugen**;
-   der Browser darf kein Client-Secret verwenden.
-5. Als erlaubte Anmeldeabläufe SRP und Refresh Token aktivieren. OAuth-Callback-
-   URLs sind für den hier verwendeten direkten Amplify-Auth-Ablauf nicht nötig.
-6. User Pool ID und Web-Client-ID notieren. Diese beiden Werte sind öffentliche
-   Frontend-Konfiguration und keine Passwörter.
-7. Nach dem Backend-Aufbau unter **Users → Create user** die gewünschten Personen
-   einladen. Den temporären Zugang sicher über Cognito verteilen. Die App
-   unterstützt die Aufforderung, beim ersten Login ein neues Passwort zu setzen.
+- **AWS Account-ID und angemeldetes Konto:** Im Projektstamm in PowerShell
+   `aws sts get-caller-identity --query Account --output text` ausführen. Die
+   angezeigte 12-stellige ID muss zum Konto passen, in dem Terraform deployen soll.
+   Eine separate `account_id`-Variable ist nicht nötig.
+- **IoT-Zertifikats-ARN:** Die ARN wird bei der Zertifikatserstellung in
+   [docs/aws-iot-setup.md](aws-iot-setup.md) ausgegeben. Bei einem bestehenden
+   Zertifikat findest/kopierst du sie in **AWS IoT Core → Security → Certificates**.
+   Die ARN enthält die Account-ID.
+- **Git-Repository-URL:** Im Projektstamm `git remote get-url origin` ausführen.
+   Verwende die HTTPS-URL ohne eingebettete Zugangsdaten, etwa
+   `https://github.com/OWNER/REPOSITORY.git`.
 
-## 3. DynamoDB und Timestream
+### AWS Amplify GitHub App installieren
 
-### DynamoDB
+1. Melde dich auf GitHub mit einem Konto an, das das Repository verwalten darf.
+2. Öffne die Installationsseite für die konfigurierte AWS-Region. Für
+   `eu-central-1` ist das:
+   <https://github.com/apps/aws-amplify-eu-central-1/installations/new>
+   Für eine andere Region ersetze `eu-central-1` im Link durch den Wert von
+   `aws_region`.
+3. Wähle den GitHub-Account bzw. die Organisation, der/die das Repo besitzt.
+4. **Only select repositories** wählen und nur das MobileFrost-Repository
+   freigeben. Danach **Install & Authorize** bestätigen.
+5. Falls das Repository einer Organisation gehört und du keine Adminrechte hast,
+   muss ein Organisations-Admin die Installation genehmigen.
 
-Unter **Amazon DynamoDB → Tables → Create table** anlegen:
+### GitHub Personal Access Token erzeugen
+
+1. In GitHub **Settings → Developer settings → Personal access tokens → Tokens
+   (classic) → Generate new token** öffnen.
+2. Eine Ablaufzeit setzen und den Scope `admin:repo_hook` wählen. Dieser Token
+   wird für den Amplify-Webhook benötigt.
+3. Token erzeugen und direkt in `amplify_repository_access_token` in
+   `terraform.tfvars` eintragen. GitHub zeigt den Wert später nicht erneut an.
+
+```hcl
+aws_region                      = "eu-central-1"
+project_name                    = "mobilefrost"
+environment                     = "demo"
+device_id                       = "mobilefrost"
+device_certificate_arn          = "REPLACE_WITH_DEVICE_CERTIFICATE_ARN"
+amplify_repository_url          = "https://github.com/OWNER/REPOSITORY.git"
+amplify_repository_access_token = "REPLACE_WITH_GITHUB_TOKEN"
+amplify_branch_name             = "main"
+```
+
+Ersetze die Werte so:
+
+| Variable im Beispiel | Was eintragen | Woher bekommst du es? |
+| --- | --- | --- |
+| `aws_region` | AWS-Region, z. B. `eu-central-1` | AWS-Konsole oben rechts; dieselbe Region für alle Ressourcen verwenden. Der Beispielwert kann bleiben. |
+| `project_name` | Namenspräfix, `mobilefrost` | Kann so bleiben. |
+| `environment` | Umgebung, z. B. `demo` | Kann so bleiben. |
+| `device_id` | IoT-Thing-Name, `mobilefrost` | Muss mit `AWS_IOT_THING_NAME` auf dem Pi übereinstimmen; kann so bleiben. |
+| `device_certificate_arn` | Ganze ARN statt `REPLACE_WITH_DEVICE_CERTIFICATE_ARN` | Ausgabe von `aws iot create-keys-and-certificate` oder AWS IoT Core → Security → Certificates → Zertifikat → ARN. Die ARN enthält Region, 12-stellige Account-ID und Certificate-ID. |
+| `amplify_repository_url` | HTTPS-URL statt `OWNER/REPOSITORY` | `git remote get-url origin`; falls die Ausgabe mit `git@github.com:` beginnt, die HTTPS-Form `https://github.com/OWNER/REPOSITORY.git` verwenden. |
+| `amplify_repository_access_token` | GitHub-PAT statt `REPLACE_WITH_GITHUB_TOKEN` | In GitHub erzeugen, siehe GitHub-Token-Schritt oben. Den Token vollständig zwischen die Anführungszeichen setzen. |
+| `amplify_branch_name` | Git-Branch, meist `main` | Branchname im Repository. Der Beispielwert kann bleiben, wenn dein Branch `main` heißt. |
+
+Die Account-ID musst du nicht separat eintragen. Prüfe, dass Terraform beim Planen
+mit dem richtigen AWS-Konto verbunden ist:
+
+```powershell
+aws sts get-caller-identity --query Account --output text
+```
+
+Der Token wird über OneDrive synchronisiert und ist für Personen mit Zugriff auf
+dieses OneDrive lesbar. Terraform-State ebenfalls nicht öffentlich speichern.
+
+Im Projektstamm:
+
+```powershell
+terraform -chdir=terraform/amplify init
+terraform -chdir=terraform/amplify fmt -check
+terraform -chdir=terraform/amplify validate
+terraform -chdir=terraform/amplify plan
+```
+
+Prüfe im Plan Region, IAM-Rechte, Ressourcen und Kosten. Erst wenn der Plan
+erwartet aussieht, `terraform -chdir=terraform/amplify apply` ausführen. Die
+Bestätigung gibst du selbst ein; `apply` nicht starten, wenn du den Plan nicht
+vollständig geprüft hast.
+
+Terraform erstellt Amplify, Cognito, API Gateway, Lambda, DynamoDB, AWS-IoT-
+Regeln, Rollen und Policies. Die Amplify-App hängt am Branch `main` und verwendet
+die Repository-`amplify.yml` mit `frontend` als Monorepo-App-Root.
+
+## 2. Cognito-Nutzer einladen
+
+Terraform erstellt den User Pool mit E-Mail-Anmeldung und deaktivierter
+Selbstregistrierung. Der Web-App-Client hat kein Client-Secret und verwendet
+SRP plus Refresh Token. Nach erfolgreichem Apply in **Cognito → User pools →
+mobilefrost-demo-users → Users → Create user** die gewünschten Personen
+einladen. Die App unterstützt beim ersten Login das Setzen eines neuen Passworts.
+
+Wichtige Werte findest du anschließend mit:
+
+```powershell
+terraform -chdir=terraform/amplify output
+```
+
+Die Outputs enthalten Amplify-URL, API-URL, Cognito User Pool/Client IDs,
+IoT-Endpunkt und Namen der DynamoDB-Tabellen.
+
+## 3. DynamoDB
+
+Terraform legt zwei DynamoDB-Tabellen mit On-demand-Abrechnung und
+serverseitiger Verschlüsselung an.
+
+### Operations-Tabelle
 
 | Einstellung | Wert |
 | --- | --- |
@@ -65,34 +147,32 @@ Unter **Amazon DynamoDB → Tables → Create table** anlegen:
 | Sort key | `sk`, Typ `String` |
 | Kapazität | On-demand |
 | Verschlüsselung | AWS-owned key aktiviert |
-| Point-in-time recovery | Aktiviert, falls im Konto verfügbar |
+| Point-in-time recovery | Deaktiviert |
 
-Weitere Attribute werden nicht vorab definiert. Fahrt- und Befehlsdatensätze
-verwenden diese Tabelle.
+Die Operations-Tabelle speichert Fahrt-Sitzungen und Aktorbefehle.
 
-### Timestream
+### Messwert-Tabelle
 
-1. Unter **Amazon Timestream for LiveAnalytics** die Datenbank
-   `mobilefrost-demo_temperatures` und darin die Tabelle `temperature_readings`
-   anlegen.
-2. Retention für die Demo: Memory Store 24 Stunden, Magnetic Store 30 Tage.
-   Eine kürzere oder längere Aufbewahrung ändert Kosten und Datenverfügbarkeit.
-3. Datenbank- und Tabellenname für die API-Lambda notieren.
+| Einstellung | Wert |
+| --- | --- |
+| Tabellenname | `mobilefrost-demo-readings` |
+| Partition key | `sensor_id`, Typ `String` |
+| Sort key | `timestamp`, Typ `String` |
+| Kapazität | On-demand |
+| Verschlüsselung | AWS-owned key aktiviert |
+| Point-in-time recovery | Deaktiviert |
+
+AWS IoT speichert den Cloud-Payload direkt als DynamoDB-Item. Der vorhandene
+Payload enthält `sensor_id` und `timestamp` auf der obersten JSON-Ebene; der
+UTC-ISO-Zeitstempel wird für sortierte Zeitbereichsabfragen verwendet.
 
 ## 4. Lambda-Funktionen
 
-Erzeuge auf dem Entwicklungsrechner das ZIP aus dem Paketverzeichnis; so liegt
-`mobilefrost/` direkt im ZIP-Root, wie es Lambda benötigt:
-
-```powershell
-Push-Location src
-Compress-Archive -Path .\mobilefrost -DestinationPath ..\mobilefrost-cloud.zip -Force
-Pop-Location
-```
-
-Lege zwei Funktionen mit Runtime **Python 3.12** an. Lade für beide dasselbe ZIP
-`mobilefrost-cloud.zip` hoch. Die Funktionen verwenden nur Python-Standardmodule
-und das in der Lambda-Runtime enthaltene `boto3`.
+Terraform paketiert den Quellcode aus `src/` und erstellt beide Funktionen mit
+Runtime **Python 3.12**, Handler und den unten aufgeführten Umgebungsvariablen.
+Die ZIP-Datei wird innerhalb des Terraform-Arbeitsordners in `.terraform/`
+erstellt und nicht manuell in der Konsole hochgeladen. Die Funktionen verwenden
+das in der Lambda-Runtime enthaltene `boto3`.
 
 ### API-Funktion
 
@@ -103,31 +183,53 @@ und das in der Lambda-Runtime enthaltene `boto3`.
 | Timeout | 15 Sekunden |
 | Arbeitsspeicher | 256 MB |
 
-Umgebungsvariablen:
+Terraform setzt diese Umgebungsvariablen:
 
 | Name | Beispielwert |
 | --- | --- |
-| `TIMESTREAM_DATABASE` | `mobilefrost-demo_temperatures` |
-| `TIMESTREAM_TABLE` | `temperature_readings` |
+| `READINGS_TABLE` | `mobilefrost-demo-readings` |
 | `OPERATIONS_TABLE` | `mobilefrost-demo-operations` |
 | `DEVICE_ID` | `mobilefrost` |
 | `AWS_IOT_DATA_ENDPOINT` | IoT-Data-HTTPS-Hostname ohne `https://` |
 
+Diese Werte kommen in **Lambda → Configuration → Environment variables** der
+API-Funktion. `AWS_IOT_DATA_ENDPOINT` ist kein Amplify-Wert.
 Den IoT-Endpunkt findest du unter **AWS IoT Core → Settings → Device data
 endpoint**. Beispiel: `abcd123456-ats.iot.eu-central-1.amazonaws.com`.
 
 ### API-Lambda-Rolle
 
-Die Rolle braucht `AWSLambdaBasicExecutionRole` für CloudWatch Logs und folgende
-zusätzliche Rechte, jeweils nur auf die oben angelegte Tabelle bzw. die
-Geräte-Topics beschränkt:
+Terraform erstellt die API-Rolle mit `AWSLambdaBasicExecutionRole` für
+CloudWatch Logs sowie folgenden eng begrenzten Rechten:
 
-- Timestream: `timestream:Select` auf die Tabelle und
-  `timestream:DescribeEndpoints` auf `*`.
+- DynamoDB: `Query` auf `mobilefrost-demo-readings`.
 - DynamoDB: `GetItem`, `PutItem`, `UpdateItem`, `DeleteItem` und
-  `TransactWriteItems` auf `mobilefrost-demo-operations`.
+   `TransactWriteItems` auf `mobilefrost-demo-operations`.
 - IoT: `iot:Publish` nur auf
   `arn:aws:iot:<REGION>:<ACCOUNT_ID>:topic/mobilefrost/commands/mobilefrost/actuators/*`.
+
+Zum manuellen Testen im Lambda-Tab **Test** ein neues Testevent mit diesem
+API-Gateway-v2-Format anlegen. Es fragt den Fahrtstatus aus DynamoDB ab und
+prüft Handler, Rolle und Tabellennamen, ohne einen Aktor zu bewegen:
+
+```json
+{
+   "version": "2.0",
+   "routeKey": "GET /api/drive",
+   "rawPath": "/api/drive",
+   "requestContext": {
+      "authorizer": {
+         "jwt": {
+            "claims": { "sub": "lambda-console-test" }
+         }
+      }
+   }
+}
+```
+
+Erwartet wird HTTP-Status `200` mit `{"active":null}`, sofern keine Fahrt läuft.
+Ein `401` weist auf fehlende Test-Claims hin; ein `503` meist auf fehlende
+Umgebungsvariablen oder DynamoDB-Rechte.
 
 ### Bestätigungs-Lambda
 
@@ -138,23 +240,16 @@ Geräte-Topics beschränkt:
 | Timeout | 10 Sekunden |
 | Arbeitsspeicher | 128 MB |
 
-Umgebungsvariablen: `OPERATIONS_TABLE=mobilefrost-demo-operations` und
-`DEVICE_ID=mobilefrost`. Die Ausführungsrolle braucht `AWSLambdaBasicExecutionRole`
-und `dynamodb:UpdateItem` nur auf die Operations-Tabelle.
+Terraform setzt `OPERATIONS_TABLE=mobilefrost-demo-operations` und
+`DEVICE_ID=mobilefrost` und weist der separaten Ack-Rolle
+`dynamodb:UpdateItem` nur auf der Operations-Tabelle zu. Die Funktion wird von
+der IoT-Regel aufgerufen; private Geräteschlüssel gehören nicht in Lambda.
 
 ## 5. API Gateway mit Cognito-JWT
 
-1. **API Gateway → Create API → HTTP API** wählen.
-2. Eine Lambda-Proxy-Integration zur Funktion `mobilefrost-demo-api` einrichten.
-   In der Lambda-Funktionsberechtigung API Gateway als Aufrufer zulassen und
-   den Zugriff auf diese HTTP API beschränken.
-3. Einen JWT-Authorizer anlegen:
-   - Identity source: `$request.header.Authorization`
-   - Issuer:
-     `https://cognito-idp.<REGION>.amazonaws.com/<USER_POOL_ID>`
-   - Audience: die notierte Cognito-Web-Client-ID.
-4. Diese Routen einzeln anlegen und für jede Route den JWT-Authorizer als
-   Authorization konfigurieren:
+Terraform erstellt die HTTP API mit Lambda-Proxy-Integration, Cognito-JWT-
+Authorizer, `$default`-Stage, API-Aufrufberechtigung und CORS. Alle folgenden
+Routen sind geschützt:
 
 | Methode | Route |
 | --- | --- |
@@ -167,22 +262,16 @@ und `dynamodb:UpdateItem` nur auf die Operations-Tabelle.
 | GET | `/api/commands/{request_id}` |
 
 Die Route-Namen müssen exakt sein, weil der Lambda-Handler API-Gateway-v2-
-`routeKey` auswertet. Keine ungeschützte `$default`-Route anlegen.
-
-5. Eine `$default`-Stage mit Auto-deploy aktivieren und die API-URL notieren,
-   zum Beispiel `https://<api-id>.execute-api.<REGION>.amazonaws.com`.
-6. Unter CORS als erlaubte Origin ausschließlich die echte Amplify-Branch-URL
-   eintragen. Methoden `GET`, `POST`, `OPTIONS`; Header `authorization` und
-   `content-type`. Kein Wildcard-Origin.
+`routeKey` auswertet. Die API-URL steht nach dem Apply im Terraform-Output
+`api_url`; CORS erlaubt nur die konfigurierte Amplify-Branch-Origin.
 
 ## 6. AWS IoT Topics und Regeln
 
 ### Gerätezertifikat-Policy
 
-Das bereits auf dem Pi liegende Zertifikat muss mit einer IoT-Policy verbunden
-sein, die folgende Aktionen und Ressourcen zulässt. Ersetze `<REGION>` und
-`<ACCOUNT_ID>` durch die tatsächlichen Werte; keine Rechte auf `topic/*` oder
-`iot:*` vergeben.
+Terraform erstellt und bindet die IoT-Policy an die in `device_certificate_arn`
+angegebene Zertifikats-ARN. Sie ist auf folgende Aktionen und Ressourcen
+beschränkt; keine Rechte auf `topic/*` oder `iot:*` vergeben.
 
 | Aktion | Ressource |
 | --- | --- |
@@ -193,46 +282,38 @@ sein, die folgende Aktionen und Ressourcen zulässt. Ersetze `<REGION>` und
 | `iot:Receive` | `...:topic/mobilefrost/commands/mobilefrost/actuators/*` |
 
 Die bestehende Cloud-Sync-Verbindung nutzt Client-ID `mobilefrost`; die neue
-Bridge nutzt `mobilefrost-bridge`. Beide Verbindungen müssen explizit erlaubt
-sein.
+Bridge nutzt `mobilefrost-bridge`. Terraform erlaubt beide Client-IDs.
 
-### Temperatur-Regel nach Timestream
+### Temperatur-Regel nach DynamoDB
 
-1. In **AWS IoT Core → Message routing → Rules** eine aktivierte Regel anlegen.
-2. SQL-Version `2016-03-23`, SQL:
+Terraform legt eine aktivierte DynamoDBv2-Regel mit SQL-Version `2016-03-23` an:
 
 ```sql
-SELECT sensor_id, CAST(value AS DOUBLE) AS temperature_c
-FROM 'mobilefrost/cloud/temperatures/+'
+SELECT * FROM 'mobilefrost/cloud/temperatures/+'
 ```
 
-3. Als Aktion **Timestream** auswählen, Datenbank und Tabelle aus Abschnitt 3
-   setzen und Dimension `sensor_id` mit dem Substitution Template `${sensor_id}`
-   anlegen.
-4. Zeitstempel auf `${epoch_ms}` mit Einheit `MILLISECONDS` setzen. Das ist der
-   originale Messzeitpunkt aus dem bestehenden Outbox-Payload.
-5. Der IoT-Regelrolle `timestream:WriteRecords` nur auf dieser Tabelle und
-   `timestream:DescribeEndpoints` auf `*` erlauben.
-6. Optional einen CloudWatch-Logs-Fehlerpfad mit 14 Tagen Aufbewahrung
-   konfigurieren, damit fehlgeschlagene Timestream-Regelaktionen sichtbar sind.
+Die DynamoDBv2-Aktion schreibt den gesamten JSON-Payload in
+`mobilefrost-demo-readings`. Die IoT-Regelrolle erhält nur `dynamodb:PutItem` auf
+diese Tabelle. Der Payload muss die Primärschlüssel `sensor_id` und `timestamp`
+enthalten; diese sind im aktuellen Cloud-Sync-Payload bereits vorhanden.
 
 ### Command-Acknowledgement-Regel
 
-1. Eine zweite IoT-Regel für das Topic
-   `mobilefrost/device/status/mobilefrost/commands` anlegen; SQL:
+Terraform erstellt eine zweite IoT-Regel für das Topic
+`mobilefrost/device/status/mobilefrost/commands` mit SQL:
 
 ```sql
 SELECT * FROM 'mobilefrost/device/status/mobilefrost/commands'
 ```
 
-2. Als Aktion die Lambda-Funktion `mobilefrost-demo-ack` auswählen.
-3. Die IoT-Regelberechtigung zum Aufruf genau dieser Lambda-Funktion hinzufügen.
-   Die Ack-Lambda-Rolle benötigt keine IoT-Rechte.
+Die Regel ruft die Funktion `mobilefrost-demo-ack` auf. Terraform beschränkt die
+Lambda-Aufrufberechtigung auf genau diese Regel; die Ack-Lambda-Rolle benötigt
+keine IoT-Rechte.
 
-## 7. Amplify-Variablen setzen und deployen
+## 7. Amplify-Variablen und Deploy
 
-Unter **Amplify → App settings → Environment variables** für den Branch `main`
-folgende Werte setzen:
+Terraform setzt diese Buildvariablen am Amplify-Branch aus den erstellten
+Ressourcen:
 
 | Variable | Wert |
 | --- | --- |
@@ -241,9 +322,10 @@ folgende Werte setzen:
 | `VITE_COGNITO_USER_POOL_ID` | Cognito User Pool ID |
 | `VITE_COGNITO_USER_POOL_CLIENT_ID` | Cognito Web-Client-ID ohne Secret |
 
-Das sind nicht geheime Build-Konfigurationen. Niemals AWS Access Keys,
-Cognito-Client-Secrets oder IoT-Zertifikate als Frontend-Variablen eintragen.
-Nach dem Speichern einen neuen Amplify-Build auslösen. Danach einen Cognito-
+Terraform setzt `AWS_IOT_DATA_ENDPOINT` nur in der API-Lambda-Umgebung;
+`AWS_IOT_ENDPOINT` bleibt in der `.env` auf dem Pi. AWS Access Keys,
+Cognito-Client-Secrets und IoT-Zertifikate gehören nicht in Frontend-Variablen.
+Nach `apply` startet Amplify den Branch-Build. Danach im Cognito User Pool einen
 Nutzer administrativ einladen und mit diesem anmelden.
 
 ## 8. Raspberry Pi starten und prüfen
@@ -260,7 +342,7 @@ podman compose logs --tail=100 cloud_sync aws_bridge
 Prüfreihenfolge:
 
 1. Ohne Cognito-Anmeldung liefern alle API-Routen einen Authorizer-Fehler.
-2. Nach Anmeldung zeigt das Dashboard Messwerte und den Verlauf aus Timestream.
+2. Nach Anmeldung zeigt das Dashboard Messwerte und den Verlauf aus DynamoDB.
 3. Fahrt starten und beenden; in DynamoDB entstehen eine Session und ein
    aktiver Session-Zeiger, der beim Beenden entfernt wird.
 4. Lüfter oder Klappe einstellen. Die UI zeigt zunächst „wird übertragen“ und
@@ -273,14 +355,15 @@ Prüfreihenfolge:
 
 ## 9. Kosten und Aufräumen
 
-Timestream, CloudWatch Logs, IoT-Nachrichten, Lambda/API-Aufrufe und Amplify
-können laufende oder nutzungsabhängige Kosten verursachen. Vor längerer Nutzung
-Aufbewahrung und regionale Preise prüfen.
+On-demand-DynamoDB-Lese-/Schreibvorgänge und gespeicherte Messwerte, CloudWatch
+Logs, IoT-Nachrichten, Lambda/API-Aufrufe und Amplify können nutzungsabhängige
+Kosten verursachen. Die Messwert-Tabelle hat standardmäßig keine automatische
+Ablaufzeit; bei Dauerbetrieb Datenaufbewahrung und regionale Preise prüfen.
 
-Nach dem Test zuerst in Amplify den Branch/die App löschen, dann API Gateway,
-Lambda, Cognito-Nutzerpool, IoT-Regeln/Policy-Zuordnungen, DynamoDB-Tabelle,
-Timestream-Tabelle/Datenbank, CloudWatch-Ressourcen und zugehörige IAM-Rollen
-entfernen. Das Löschen der Timestream-Datenbank löscht auch die Cloud-Historie.
+Nach dem Test `terraform -chdir=terraform/amplify destroy` prüfen und
+bestätigen. Das entfernt API Gateway, Lambda, Cognito, IoT, DynamoDB, Amplify,
+CloudWatch und IAM-Ressourcen. Das Löschen der Messwert-Tabelle löscht auch die
+Cloud-Historie.
 Das IoT-Zertifikat anschließend deaktivieren und löschen, falls es nicht mehr
 benötigt wird. Den Pi-Stack separat stoppen:
 

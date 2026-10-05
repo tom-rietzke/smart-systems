@@ -30,13 +30,8 @@ resource "aws_iam_role_policy" "api_lambda_data" {
     Statement = [
       {
         Effect   = "Allow"
-        Action   = ["timestream:Select"]
-        Resource = aws_timestreamwrite_table.temperatures.arn
-      },
-      {
-        Effect   = "Allow"
-        Action   = ["timestream:DescribeEndpoints"]
-        Resource = "*"
+        Action   = ["dynamodb:Query"]
+        Resource = aws_dynamodb_table.readings.arn
       },
       {
         Effect = "Allow"
@@ -70,8 +65,7 @@ resource "aws_lambda_function" "api" {
 
   environment {
     variables = {
-      TIMESTREAM_DATABASE   = aws_timestreamwrite_database.temperatures.database_name
-      TIMESTREAM_TABLE      = aws_timestreamwrite_table.temperatures.table_name
+      READINGS_TABLE        = aws_dynamodb_table.readings.name
       OPERATIONS_TABLE      = aws_dynamodb_table.operations.name
       DEVICE_ID             = var.device_id
       AWS_IOT_DATA_ENDPOINT = data.aws_iot_endpoint.data.endpoint_address

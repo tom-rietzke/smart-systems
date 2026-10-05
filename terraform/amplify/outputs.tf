@@ -28,12 +28,7 @@ output "device_id" {
   value       = var.device_id
 }
 
-output "timestream_database" {
-  description = "Cloud-Datenbank mit Temperaturhistorie."
-  value       = aws_timestreamwrite_database.temperatures.database_name
-}
-
-output "timestream_table" {
-  description = "Timestream-Tabelle mit Temperaturmessungen."
-  value       = aws_timestreamwrite_table.temperatures.table_name
+output "readings_table" {
+  description = "DynamoDB-Tabelle mit Cloud-Temperaturmessungen."
+  value       = aws_dynamodb_table.readings.name
 }

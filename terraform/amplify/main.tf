@@ -79,7 +79,7 @@ resource "aws_dynamodb_table" "operations" {
   }
 
   point_in_time_recovery {
-    enabled = true
+    enabled = false
   }
 
   server_side_encryption {
@@ -89,20 +89,31 @@ resource "aws_dynamodb_table" "operations" {
   tags = local.common_tags
 }
 
-resource "aws_timestreamwrite_database" "temperatures" {
-  database_name = "${local.prefix}_temperatures"
-  tags          = local.common_tags
-}
+resource "aws_dynamodb_table" "readings" {
+  name         = "${local.prefix}-readings"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "sensor_id"
+  range_key    = "timestamp"
 
-resource "aws_timestreamwrite_table" "temperatures" {
-  database_name = aws_timestreamwrite_database.temperatures.database_name
-  table_name    = "temperature_readings"
-  tags          = local.common_tags
-
-  retention_properties {
-    magnetic_store_retention_period_in_days = var.timestream_magnetic_retention_days
-    memory_store_retention_period_in_hours  = var.timestream_memory_retention_hours
+  attribute {
+    name = "sensor_id"
+    type = "S"
   }
+
+  attribute {
+    name = "timestamp"
+    type = "S"
+  }
+
+  point_in_time_recovery {
+    enabled = false
+  }
+
+  server_side_encryption {
+    enabled = true
+  }
+
+  tags = local.common_tags
 }
 
 data "aws_iot_endpoint" "data" {

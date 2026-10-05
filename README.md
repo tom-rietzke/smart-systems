@@ -20,7 +20,7 @@ flowchart LR
     B -->|Seriell| G[Arduino-Aktor]
     G --> H[LCD / Lüfter / Servo]
     B -->|Outbox| I[AWS IoT Core]
-    I --> J[Amazon Timestream]
+    I --> J[(DynamoDB Messwerte)]
     I -->|Aktor-Befehle| L[Pi AWS-Bridge]
     L --> D
     U[Angemeldete Nutzer] --> M[Amplify Dashboard]
@@ -173,13 +173,11 @@ Node-RED-Flow ist in diesem Repository noch nicht versioniert.
 
 ## AWS Cloud
 
-AWS IoT Core und Amazon Timestream sind optional. Zertifikats-Setup, Betrieb,
-Datenerfassung, Kostenhinweise und Cleanup stehen in der
-[AWS-IoT-Einrichtungsanleitung](docs/aws-iot-setup.md). Das login-geschützte
-Cloud-Dashboard mit Cognito, API und Pi-Aktor-Rückkanal wird manuell nach der
-[Amplify-Console-Anleitung](docs/amplify-dashboard-setup.md) eingerichtet.
-Terraform ist nicht erforderlich. Auf dem Raspberry Pi starten Cloud-Sync und
-AWS-Bridge nur mit dem Cloud-Profil:
+AWS IoT Core und DynamoDB sind optional. Zertifikats-Setup und Pi-Betrieb stehen
+in der [AWS-IoT-Anleitung](docs/aws-iot-setup.md). Cognito, API, Amplify und
+die Messwerttabelle werden mit Terraform nach der
+[Amplify-Setup-Anleitung](docs/amplify-dashboard-setup.md) eingerichtet. Auf
+dem Raspberry Pi starten Cloud-Sync und AWS-Bridge nur mit dem Cloud-Profil:
 
 ```bash
 podman compose --profile cloud up -d --build cloud_sync aws_bridge

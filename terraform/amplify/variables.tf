@@ -44,18 +44,6 @@ variable "amplify_branch_name" {
   default     = "main"
 }
 
-variable "timestream_memory_retention_hours" {
-  description = "Timestream-Memory-Aufbewahrung in Stunden."
-  type        = number
-  default     = 24
-}
-
-variable "timestream_magnetic_retention_days" {
-  description = "Timestream-Magnetic-Aufbewahrung in Tagen."
-  type        = number
-  default     = 30
-}
-
 variable "tags" {
   description = "Zusätzliche AWS-Ressourcen-Tags."
   type        = map(string)

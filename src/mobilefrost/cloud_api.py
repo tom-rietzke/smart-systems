@@ -1,8 +1,7 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 import json
 import os
-import re
 import uuid
 
 
@@ -183,19 +182,17 @@ def lambda_handler(event, context):
     try:
         import boto3
 
-        timestream = boto3.client("timestream-query")
         dynamodb = boto3.resource("dynamodb")
         table = dynamodb.Table(os.environ["OPERATIONS_TABLE"])
+        readings_table = dynamodb.Table(os.environ["READINGS_TABLE"])
         iot_data = boto3.client(
             "iot-data",
             endpoint_url=f"https://{os.environ['AWS_IOT_DATA_ENDPOINT']}",
         )
         device_id = os.environ["DEVICE_ID"]
         dependencies = {
-            "query_temperatures": lambda hours: query_cloud_temperatures(
-                timestream,
-                os.environ["TIMESTREAM_DATABASE"],
-                os.environ["TIMESTREAM_TABLE"],
+            "query_temperatures": lambda hours: query_dynamodb_temperatures(
+                readings_table,
                 hours,
             ),
             "get_active_drive": lambda: get_active_drive(table, device_id),
@@ -381,67 +378,72 @@ def mark_command_failed(table, request_id):
     )
 
 
-def query_cloud_temperatures(client, database, table, hours):
+def query_dynamodb_temperatures(table, hours, now=None, key_factory=None):
     if hours not in ALLOWED_HOURS:
         raise ValueError("Unsupported temperature range")
-    if not _valid_identifier(database) or not _valid_identifier(table):
-        raise ValueError("Invalid Timestream identifier")
-
-    table_name = f'"{database}"."{table}"'
-    history_query = (
-        "SELECT sensor_id, time, measure_value::double AS value "
-        f"FROM {table_name} "
-        "WHERE measure_name = 'temperature_c' "
-        f"AND time >= ago({hours}h) "
-        "ORDER BY time ASC"
-    )
-    latest_query = (
-        "SELECT sensor_id, MAX_BY(measure_value::double, time) AS value, "
-        f"MAX(time) AS time FROM {table_name} "
-        "WHERE measure_name = 'temperature_c' "
-        "GROUP BY sensor_id"
-    )
-
-    history_rows = _query_rows(client, history_query)
-    latest_rows = _query_rows(client, latest_query)
+    now = datetime.now(timezone.utc) if now is None else now
+    if now.tzinfo is None or now.utcoffset() is None:
+        now = now.replace(tzinfo=timezone.utc)
+    start_time = (now.astimezone(timezone.utc) - timedelta(hours=hours)).isoformat()
+    key_factory = _dynamodb_key if key_factory is None else key_factory
     series = {sensor_id: [] for sensor_id in SENSOR_IDS}
     latest = {}
 
-    for row in history_rows:
-        sensor_id, timestamp, value = _row_values(row, 3)
-        if sensor_id in series:
-            series[sensor_id].append((_parse_timestamp(timestamp), float(value)))
+    for sensor_id in SENSOR_IDS:
+        history = _query_readings(
+            table,
+            sensor_id,
+            key_factory,
+            start_time=start_time,
+        )
+        series[sensor_id] = [
+            (_parse_timestamp(item["timestamp"]), float(item["value"]))
+            for item in history
+        ]
 
-    for row in latest_rows:
-        sensor_id, value, timestamp = _row_values(row, 3)
-        if sensor_id in series:
-            latest[sensor_id] = (_parse_timestamp(timestamp), float(value))
+        latest_items = _query_readings(
+            table,
+            sensor_id,
+            key_factory,
+            scan_forward=False,
+            limit=1,
+        )
+        if latest_items:
+            item = latest_items[0]
+            latest[sensor_id] = (
+                _parse_timestamp(item["timestamp"]),
+                float(item["value"]),
+            )
 
     return {"series": series, "latest": latest}
 
 
-def _query_rows(client, query):
-    rows = []
-    response = client.query(QueryString=query)
-    rows.extend(response.get("Rows", []))
-    while response.get("NextToken"):
-        response = client.query(
-            QueryString=query,
-            NextToken=response["NextToken"],
-        )
-        rows.extend(response.get("Rows", []))
-    return rows
+def _query_readings(table, sensor_id, key_factory, start_time=None, scan_forward=True, limit=None):
+    key_condition = key_factory("sensor_id").eq(sensor_id)
+    if start_time is not None:
+        key_condition = key_condition & key_factory("timestamp").gte(start_time)
+
+    query = {
+        "KeyConditionExpression": key_condition,
+        "ScanIndexForward": scan_forward,
+    }
+    if limit is not None:
+        query["Limit"] = limit
+
+    items = []
+    response = table.query(**query)
+    items.extend(response.get("Items", []))
+    while response.get("LastEvaluatedKey") and limit is None:
+        query["ExclusiveStartKey"] = response["LastEvaluatedKey"]
+        response = table.query(**query)
+        items.extend(response.get("Items", []))
+    return items
 
 
-def _row_values(row, expected_count):
-    values = row.get("Data", [])
-    if len(values) != expected_count:
-        raise ValueError("Unexpected Timestream row")
-    return tuple(value.get("ScalarValue") for value in values)
+def _dynamodb_key(name):
+    from boto3.dynamodb.conditions import Key
 
-
-def _valid_identifier(value):
-    return isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_]+", value) is not None
+    return Key(name)
 
 
 def _parse_timestamp(value):

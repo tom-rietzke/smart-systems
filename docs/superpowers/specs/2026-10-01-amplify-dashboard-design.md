@@ -10,14 +10,13 @@ public internet.
 
 ## Current State
 
-The dashboard is a Flask application running on the Raspberry Pi and is bound to
-loopback by Compose. It reads the local PostgreSQL database and has local
-control endpoints. The optional `cloud_sync` process publishes temperature
-events to AWS IoT Core, but it does not subscribe to cloud commands. The
-No AWS dashboard infrastructure has been provisioned yet. The local controller
-accepts fan and flap commands from Mosquitto; it has no drive-session lifecycle.
-Automatic cooling can overwrite a manual actuator setting on a subsequent
-temperature reading.
+The local dashboard is a Flask application running on the Raspberry Pi and is
+bound to loopback by Compose. It reads PostgreSQL and has local control
+endpoints. The optional `cloud_sync` process publishes temperature events to
+AWS IoT Core, but does not subscribe to cloud commands. The local controller
+accepts fan and flap commands from Mosquitto and has no drive-session lifecycle.
+Automatic cooling can overwrite manual actuator settings on a later sensor
+update. Terraform defines the cloud resources, but they have not been applied.
 
 The current Flask control endpoints are not authenticated and must not be
 exposed directly through Amplify, a public tunnel, or an internet-facing proxy.
@@ -27,7 +26,7 @@ exposed directly through Amplify, a public tunnel, or an internet-facing proxy.
 Amplify Hosting serves a static dashboard frontend. The frontend authenticates
 users through an Amazon Cognito User Pool and sends requests to an API Gateway
 HTTP API. A JWT authorizer protects every application API route. Lambda
-functions query Amazon Timestream for temperature history and latest readings,
+functions query a DynamoDB readings table for temperature history and latest readings,
 manage drive-session records, validate actuator values, and publish actuator
 commands to AWS IoT Core. The browser never receives AWS device-certificate
 credentials and does not connect directly to the MQTT broker.
@@ -35,9 +34,9 @@ credentials and does not connect directly to the MQTT broker.
 The Raspberry Pi initiates an outbound TLS MQTT connection to AWS IoT Core using
 its device certificate. A cloud bridge subscribes only to its assigned command
 topics, forwards fan and flap commands to the existing local Mosquitto actuator
-topics, and publishes command acknowledgements and reported actuator state to
-AWS IoT Core. IoT rules deliver temperature events to Timestream and command
-acknowledgements to a DynamoDB operations table. The bridge can run as an
+topics, and publishes command acknowledgements to AWS IoT Core. An IoT rule
+writes temperature events to a DynamoDB readings table and another routes
+command acknowledgements to a DynamoDB operations table. The bridge can run as an
 opt-in Compose service independently of the local controller.
 
 ```mermaid
@@ -45,7 +44,7 @@ flowchart LR
     U[Authenticated user] --> A[Amplify dashboard]
     A -->|Cognito JWT| G[API Gateway]
     G --> L[Lambda API]
-    L -->|Query| T[(Timestream)]
+    L -->|Query| T[(DynamoDB readings)]
     L -->|Publish actuator command| I[AWS IoT Core]
     L -->|Drive session and command state| D[(DynamoDB)]
     P[Raspberry Pi cloud bridge] <-->|Outbound TLS MQTT| I
@@ -82,7 +81,7 @@ flowchart LR
 The authenticated API provides:
 
 - `GET /api/temperatures?hours=1|24|168`: latest readings and time series from
-  Timestream.
+  DynamoDB.
 - `GET /api/drive`: current active session, if any.
 - `POST /api/drive/start` and `POST /api/drive/stop`: idempotent session
   lifecycle operations recorded in DynamoDB.
@@ -98,33 +97,29 @@ types and values, forwards them to existing local topics, and acknowledges
 receipt/forwarding. An acknowledgement confirms bridge processing, not physical
 verification of the fan or servo.
 
-Drive sessions are stored separately from Timestream measurements. Only one
+Drive sessions are stored separately from temperature readings. Only one
 active session per configured MobileFrost device is allowed. Repeated start or
 stop requests are idempotent and must not create duplicate sessions.
 
 ## AWS Resources and Security
 
-Infrastructure is configured manually in the AWS Console. It includes Amplify
-Hosting, Cognito, API Gateway with a JWT authorizer, least-privilege Lambda
-roles, Timestream and its temperature rule, AWS IoT command and acknowledgement
-rules, an operations DynamoDB table, and scoped IoT certificate policies.
-Region and device identifiers are configurable. A setup guide gives the exact
-resource values and creation order; AWS account credentials remain in the
-operator's AWS session and are never added to the repository.
+Terraform provisions Amplify Hosting, Cognito, API Gateway with a JWT authorizer,
+least-privilege Lambda roles, separate DynamoDB readings and operations tables,
+AWS IoT temperature and acknowledgement rules, and scoped IoT certificate
+policies. Region and device identifiers are configurable. AWS credentials stay
+in the operator's local AWS CLI/session and are never added to the repository.
 
 The Cognito User Pool is private to invited users; public self-registration is
 disabled by default. Only authenticated JWT claims can invoke control APIs. The
 Pi certificate is restricted to its own command subscription and state/ack
 publish topics. Lambda has publish permission only for the configured device
-command topics and read permission only for the dashboard's Timestream data.
+command topics and query permission only for the dashboard's readings table.
 API CORS allows the configured Amplify origin rather than arbitrary origins.
 Secrets and private keys are not checked in or exposed to the frontend.
 
 No public listener, port forwarding, or inbound tunnel is added to the
-Raspberry Pi. Amplify Hosting deployment can be connected to the team's source
-repository through the AWS Console. AWS infrastructure deployment remains a
-separate operator action that requires account access and a review of each
-resource's settings and costs.
+Raspberry Pi. Terraform configures Amplify from the team's source repository.
+The operator reviews the Terraform plan and explicitly applies it.
 
 ## Scope
 
@@ -133,8 +128,8 @@ resource's settings and costs.
 - Add authenticated cloud API handlers for readings, drive sessions, and
   actuator commands/status.
 - Add the Pi-to-AWS IoT command bridge and acknowledgement flow.
-- Document manual AWS Console setup for the required resources, including
-  deployment, costs, credentials, and cleanup.
+- Provision AWS resources with Terraform and document deployment, costs,
+  credentials, and cleanup.
 - Add focused unit tests for API authorization, input validation, session
   idempotency, command correlation/acknowledgement, and frontend contracts.
 - Keep local automatic cooling, local PostgreSQL history, and local Mosquitto
@@ -169,6 +164,6 @@ GPS/distance tracking, alerting, and replacing the local database.
   local Mosquitto; the current hardware does not report measured fan speed or
   servo position.
 - AWS services incur usage-based costs. The operator reviews regional pricing
-  and Console settings before creating or leaving resources active.
+  and the Terraform plan before applying or leaving resources active.
 - The Amplify source provider/repository URL and AWS account/region are not yet
   configured in this workspace and must be supplied during deployment setup.

@@ -1,13 +1,13 @@
-# AWS IoT Core und Timestream einrichten
+# AWS IoT Core und DynamoDB einrichten
 
-Diese Anleitung verbindet den MobileFrost-Raspberry-Pi mit AWS IoT Core. Der Pi
+Diese Anleitung richtet das Pi-Gerätezertifikat für AWS IoT Core ein. Der Pi
 behält seine lokale PostgreSQL-Datenbank; ein zusätzlicher Worker überträgt
-ausstehende Messungen zu Timestream. Ein Cloud-Ausfall stoppt die lokale
-Messwerterfassung nicht.
+ausstehende Messungen an AWS IoT Core. Eine Terraform-IoT-Regel speichert diese
+in DynamoDB. Ein Cloud-Ausfall stoppt die lokale Messwerterfassung nicht.
 
 ## Voraussetzungen
 
-- Ein AWS-Konto mit Berechtigungen für AWS IoT Core, Timestream, CloudWatch Logs
+- Ein AWS-Konto mit Berechtigungen für AWS IoT Core, DynamoDB, CloudWatch Logs
   und IAM-Rollen samt Policies. Manche AWS-Academy-/Lab-Konten sperren das
   Anlegen von IAM-Rollen.
 - AWS CLI v2 (nur für die optionale Zertifikatserstellung) und Podman Compose.
@@ -15,10 +15,10 @@ Messwerterfassung nicht.
   Verbindungen auf Port `443` aufbauen. Der MQTT-Client verwendet für X.509-
   Authentifizierung das AWS-IoT-ALPN-Protokoll `x-amzn-mqtt-ca`.
 
-AWS IoT Core und Timestream für LiveAnalytics speichern die Daten in der in der
-AWS-Konsole ausgewählten Region, empfohlen `eu-central-1`. Vor dem Dauerbetrieb
-die aktuelle regionale Preisübersicht für MQTT-Nachrichten, Regelaktionen,
-Timestream-Schreibvorgänge, Aufbewahrung und Abfragen prüfen.
+AWS IoT Core und DynamoDB speichern die Daten in der in Terraform ausgewählten
+Region, empfohlen `eu-central-1`. Vor dem Dauerbetrieb
+die aktuelle regionale Preisübersicht für MQTT-Nachrichten, DynamoDB-Lese- und
+Schreibvorgänge, Speicher, Aufbewahrung und Abfragen prüfen.
 
 ## AWS-Zugang vorbereiten
 
@@ -33,15 +33,15 @@ aws sts get-caller-identity
 
 Alternativ kann ein bereits eingerichtetes AWS-CLI-Profil verwendet werden.
 Keine Access Keys oder Passwörter in Projektdateien oder Chatnachrichten
-eintragen. Die Ressourcen werden manuell über die AWS-Konsole eingerichtet.
+eintragen. Terraform nutzt die lokale AWS-CLI-Session.
 
-## AWS-Ressourcen in der Konsole
+## Terraform-Ressourcen
 
-Für Amplify-Hosting, Cognito, API Gateway, Lambda, DynamoDB, Timestream und die
-IoT-Regeln folge der vollständigen
-[Amplify-Dashboard-Console-Anleitung](amplify-dashboard-setup.md). Dort sind
-Ressourcennamen, Reihenfolge, IAM-Rechte, Topics, Umgebungsvariablen und
-Aufräumen beschrieben. Terraform wird nicht benötigt.
+Amplify, Cognito, API Gateway, Lambda, beide DynamoDB-Tabellen, IoT-Regeln und
+IAM-Rollen werden im Ordner `terraform/amplify` verwaltet. Die Variablen und
+Befehle stehen in der [Terraform-Amplify-Anleitung](amplify-dashboard-setup.md).
+Das Gerätezertifikat und sein privater Schlüssel werden separat erstellt; nur
+die Zertifikats-ARN wird als Terraform-Variable übergeben.
 
 ## Gerätezertifikat erstellen
 
@@ -91,10 +91,11 @@ curl.exe -o (Join-Path $secretDir "AmazonRootCA1.pem") `
   https://www.amazontrust.com/repository/AmazonRootCA1.pem
 ```
 
-Erstelle bzw. öffne in der AWS-Konsole das Thing und die gerätegebundene
-Zertifikat-Policy gemäß der Amplify-Console-Anleitung. Notiere den Device-Data-
-Endpoint aus **AWS IoT Core → Settings**. Der Pi authentifiziert sich im Betrieb
-mit dem IoT-Zertifikat, nicht mit einem AWS-CLI-Profil.
+Kopiere die Zertifikats-ARN in `device_certificate_arn` der lokalen
+`terraform/amplify/terraform.tfvars`. Terraform erstellt Thing, Policy und
+Zertifikatszuordnung. Der Device-Data-Endpoint wird nach `terraform apply` als
+Output `iot_endpoint` angezeigt. Der Pi authentifiziert sich im Betrieb mit
+dem IoT-Zertifikat, nicht mit einem AWS-CLI-Profil.
 
 ## Schlüssel auf den Raspberry Pi übertragen
 
@@ -137,14 +138,14 @@ AWS_IOT_THING_NAME=mobilefrost
 Dann den Cloud-Service starten:
 
 ```bash
-podman compose --profile cloud up -d --build cloud_sync
+podman compose --profile cloud up -d --build cloud_sync aws_bridge
 podman compose ps
-podman compose logs --tail=100 cloud_sync
+podman compose logs --tail=100 cloud_sync aws_bridge
 ```
 
 Die übrigen Services können weiterhin wie gewohnt mit `podman compose up -d
---build` laufen. Ohne `--profile cloud` wird der zusätzliche Worker nicht
-gestartet. Nach dem Start wartet er auf lokale Outbox-Einträge.
+--build` laufen. Ohne `--profile cloud` werden Cloud-Sync und Bridge nicht
+gestartet. Der Worker wartet auf lokale Outbox-Einträge.
 
 ## Datenfluss prüfen
 
@@ -155,22 +156,11 @@ gestartet. Nach dem Start wartet er auf lokale Outbox-Einträge.
    alle zehn Sekunden ein Messwert lokal gespeichert.
 3. Die Nachricht im MQTT-Testclient prüfen. Sie enthält `event_id`, `sensor_id`,
    `value`, den ISO-UTC-Zeitstempel und `epoch_ms`.
-4. In **Amazon Timestream → Query editor** die letzten Datensätze abfragen:
-
-```sql
-SELECT time, sensor_id, measure_name, measure_value::double AS temperature_c
-FROM "mobilefrost_temperatures"."temperature_readings"
-WHERE measure_name = 'temperature_c'
-ORDER BY time DESC
-```
-
-Die Timestream-Regel verwendet `sensor_id` als Dimension und schreibt den
-SELECT-Wert `temperature_c` als Messgröße. Ein MQTT-PUBACK bestätigt nur, dass
-AWS IoT Core die Nachricht angenommen hat; es bestätigt nicht den Erfolg der
-nachgelagerten Timestream-Regel. Bei fehlenden Datensätzen zusätzlich die
-CloudWatch-Loggruppe `/aws/iot/mobilefrost/rule-errors` prüfen. `published_at`
-in der lokalen Outbox dokumentiert die Annahme durch IoT Core, nicht eine
-Ende-zu-Ende-Bestätigung von Timestream.
+4. In **DynamoDB → Tables → mobilefrost-demo-readings → Explore table items**
+  prüfen, ob Items mit `sensor_id`, `timestamp`, `value` und `event_id`
+  geschrieben werden. Bei fehlenden Items die IoT-Regel und die CloudWatch-
+  Fehlerloggruppe `/aws/iot/mobilefrost-demo/rule-errors` prüfen. Ein MQTT-PUBACK
+  bestätigt nur die Annahme durch IoT Core, nicht den Erfolg der Regelaktion.
 
 Für einen Test ohne angeschlossene Sensoren kann auf dem Pi ein Outbox-Datensatz
 manuell angelegt werden:
@@ -194,14 +184,13 @@ lokale PostgreSQL-Speicherung, Mosquitto und Dashboard bleiben davon unabhängig
 
 Die Region `eu-central-1` hält die Cloud-Daten in der EU. Sensornachrichten
 enthalten nur die Sensor-ID, Temperatur und Messzeit, keine Personen- oder
-Fahrerdaten. Die Timestream-Tabelle verwendet standardmäßig 24 Stunden Memory-Store- und 30 Tage
-Magnetic-Store-Aufbewahrung. CloudWatch-Regelfehlerlogs werden nach 14 Tagen
-gelöscht. Preise und Aufbewahrungsbedarf vor längerem Betrieb prüfen; AWS-Preise
-können sich ändern.
+Fahrerdaten. DynamoDB löscht Messwerte standardmäßig nicht automatisch; die
+Aufbewahrung und Tabellenkosten bei Dauerbetrieb regelmäßig prüfen. CloudWatch-
+Regelfehlerlogs werden nach 14 Tagen gelöscht. AWS-Preise können sich ändern.
 
-Demo-Ressourcen nach Abschluss manuell über die AWS-Konsole entfernen. Das löscht
-auch Timestream-Datenbank und Tabelle samt Demo-Daten. Das separat erzeugte
-Zertifikat danach deaktivieren und löschen:
+Demo-Ressourcen nach Abschluss mit `terraform -chdir=terraform/amplify destroy`
+entfernen. Das löscht die DynamoDB-Messwerttabelle samt Daten. Das separat
+erzeugte Zertifikat danach deaktivieren und löschen:
 
 ```powershell
 $certificateId = ($certificateArn -split "/")[-1]
